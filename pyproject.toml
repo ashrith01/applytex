@@ -1,0 +1,29 @@
+[project]
+name = "latex-resume-matcher"
+version = "0.1.0"
+description = "LaTeX-native resume tailoring engine: parse .tex -> JSON -> surgical edits -> .tex -> one-page PDF"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.10",
+    "pypdf>=5.1",
+]
+
+[project.scripts]
+latex-resume = "latex_resume.engine:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/latex_resume"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
