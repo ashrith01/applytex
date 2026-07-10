@@ -10,21 +10,21 @@ from latex_resume.profile_extraction import (
 
 
 PDF_TEXT = """
-ASHRITH VADDE
-+1-(713)480-6317 ashrith.vadde@gmail.com https://www.linkedin.com/in/ashrith-v https://ashrith01.github.io/
+MORGAN LEE
++1-555-0199 morgan.lee@example.com https://www.linkedin.com/in/morgan-lee https://morganlee.dev/
 Professional Summary
 AI/ML Engineer with 2+ years building LLM and RAG-based applications.
 Education
 Master of Science in Engineering Data Science and AI CGPA: 4/4
-University of Houston - Houston, TX August 2025 - May 2027
+Pacific Technical University - Seattle, WA August 2025 - May 2027
 B.Tech in Computer Science and Engineering (Artificial Intelligence) CGPA: 8.43/10
-Amrita School of Engineering - Bengaluru, India June 2019 - May 2023
+North Valley University - Austin, TX June 2019 - May 2023
 Experience
-Accenture Nov 2023 - Aug 2025
-AI/ML Computational Science Analyst Hyderabad, India
+ExampleAI Labs Nov 2023 - Aug 2025
+AI/ML Computational Science Analyst Seattle, WA
 • Engineered LLM-powered code transformation features for the GenLite reverse engineering platform.
 • Built and delivered 3+ end-to-end RAG pipelines and AI chatbot prototypes for enterprise clients.
-Samsung Prism Sep 2021 - Apr 2022
+Open Source Fellowship Sep 2021 - Apr 2022
 Project Intern
 • Researched model interpretability with a team of 6 using SHAP, CEM, and LIME.
 • Architected a modular XAI framework supporting image, text, and tabular ML models.
@@ -35,34 +35,33 @@ AI/ML: Machine Learning, Deep Learning, NLP, LLMs
 
 
 def test_profile_prefill_extracts_all_tex_education_and_work_entries() -> None:
-    tex = Path("samples/resume.tex").read_bytes()
+    tex = Path("samples/sample_resume.tex").read_bytes()
 
     profile, applied = profile_with_resume_prefill(
         CandidateProfile(),
-        filename="resume.tex",
+        filename="sample_resume.tex",
         data=tex,
         overwrite=True,
     )
 
     assert "educations" in applied
     assert "work_experiences" in applied
+    assert profile.full_name == "Jane Doe"
+    assert profile.email == "jane.doe@example.com"
     assert [education.school for education in profile.educations] == [
-        "University of Houston",
-        "Amrita School of Engineering",
+        "Massachusetts Institute of Technology",
     ]
-    assert profile.educations[0].start_date == "2025-08"
-    assert profile.educations[0].end_date == "2027-05"
-    assert profile.educations[1].start_date == "2019-06"
-    assert profile.educations[1].end_date == "2023-05"
-    assert profile.github_url == ""
-    assert profile.portfolio_url == "https://ashrith01.github.io/"
+    assert profile.educations[0].start_date == "2015"
+    assert profile.educations[0].end_date == "2019"
+    assert profile.github_url == "https://github.com/janedoe"
+    assert profile.linkedin_url == "https://linkedin.com/in/janedoe"
     assert "Python" in profile.skills
     assert all(not skill.startswith(":") for skill in profile.skills)
-    assert [work.company for work in profile.work_experiences] == ["Accenture", "Samsung Prism"]
-    assert profile.work_experiences[0].job_title == "AI/ML Computational Science Analyst"
-    assert profile.work_experiences[0].location == "Hyderabad, India"
+    assert [work.company for work in profile.work_experiences] == ["Acme Corp", "Startup Inc"]
+    assert profile.work_experiences[0].job_title == "Software Engineer"
+    assert profile.work_experiences[0].location == "San Francisco, CA"
     assert len(profile.work_experiences[0].bullets) == 3
-    assert profile.work_experiences[1].job_title == "Project Intern"
+    assert profile.work_experiences[1].job_title == "Junior Developer"
     assert len(profile.work_experiences[1].bullets) == 2
 
 
@@ -172,14 +171,14 @@ def test_pdf_text_extraction_keeps_education_and_work_sections_separate() -> Non
     educations = facts["educations"]
     work = facts["work_experiences"]
     assert [education.school for education in educations] == [
-        "University of Houston",
-        "Amrita School of Engineering",
+        "Pacific Technical University",
+        "North Valley University",
     ]
     assert educations[0].degree == "Master of Science in Engineering Data Science and AI"
     assert educations[0].gpa == "4/4"
     assert educations[0].start_date == "2025-08"
     assert educations[1].end_date == "2023-05"
-    assert [entry.company for entry in work] == ["Accenture", "Samsung Prism"]
+    assert [entry.company for entry in work] == ["ExampleAI Labs", "Open Source Fellowship"]
     assert work[0].summary.startswith("Engineered LLM-powered code transformation")
     assert work[1].job_type == "Internship"
     assert "Python" in facts["skills"]
