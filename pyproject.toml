@@ -35,7 +35,7 @@ smartjob-benchmark = "latex_resume.benchmark.cli:main"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3",
+    "pytest>=9.1.1",
 ]
 benchmark = [
     "fastembed>=0.7",
