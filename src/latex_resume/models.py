@@ -23,6 +23,7 @@ class SectionType(str, Enum):
     WORK_EXPERIENCE = "work_experience"
     PROJECTS = "projects"
     SKILLS = "skills"
+    PUBLICATIONS = "publications"
     EDUCATION = "education"
     CERTIFICATIONS = "certifications"
     PERSONAL_INFO = "personal_info"
@@ -42,6 +43,7 @@ LOCKED_SECTION_TYPES: frozenset[SectionType] = frozenset(
     {
         SectionType.EDUCATION,
         SectionType.CERTIFICATIONS,
+        SectionType.PUBLICATIONS,
         SectionType.PERSONAL_INFO,
         SectionType.UNKNOWN,
     }

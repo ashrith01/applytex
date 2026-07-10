@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible problem in parsing, optimization, or rendering.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove personal information, API keys, and private job-description text before attaching examples.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the smallest synthetic LaTeX or command that reproduces the issue.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Parser or reconstruction
+        - ATS scoring or screening
+        - LLM optimization or validation
+        - PDF rendering or one-page fit
+        - Next.js web UI
+        - Chrome extension
+        - Streamlit UI (legacy)
+        - FastAPI
+        - Benchmark
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, LaTeX engine, and model provider if relevant.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed personal data, credentials, and private employer text.
+          required: true

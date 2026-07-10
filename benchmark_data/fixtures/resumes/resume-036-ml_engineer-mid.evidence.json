@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-036-ml_engineer-mid",
+  "skills": [
+    "Python",
+    "PyTorch",
+    "Scikit-learn",
+    "SQL",
+    "FastAPI",
+    "MLflow",
+    "Docker",
+    "AWS",
+    "Feature Engineering",
+    "Model Deployment"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "finance"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "24\\%",
+    "26\\%",
+    "3 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "API development": [
+      "FastAPI"
+    ],
+    "cloud-native": [
+      "Docker",
+      "AWS"
+    ],
+    "model monitoring": [
+      "MLflow"
+    ]
+  },
+  "allowed_claims": [
+    "Built training and inference pipelines for supervised machine learning models",
+    "Served validated models through APIs with repeatable deployment workflows",
+    "Monitored model quality and investigated performance regressions",
+    "API development",
+    "model monitoring",
+    "ML lifecycle"
+  ],
+  "synthetic": true
+}

@@ -1,20 +1,44 @@
 [project]
-name = "latex-resume-matcher"
-version = "0.1.0"
-description = "LaTeX-native resume tailoring engine: parse .tex -> JSON -> surgical edits -> .tex -> one-page PDF"
+name = "applytex"
+version = "0.3.0"
+description = "Evidence-grounded AI resume tailoring for LaTeX with strict one-page enforcement"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12"
+keywords = ["resume", "latex", "ats", "llm", "job-search", "machine-learning"]
 dependencies = [
     "pydantic>=2.10",
     "pypdf>=5.1",
+    "anthropic>=0.40",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+    "groq>=1.2.0",
+    "requests>=2.34.2",
+    "python-dotenv>=1.0",
+    "streamlit>=1.40",
+    "langsmith>=0.3",
+    "openai-codex>=0.1.0b3,<0.2; python_version < '3.14' and sys_platform != 'win32'",
+    "langchain-core>=1.4.3",
+    "langchain-openai>=1.3.0",
+    "langchain-ollama>=1.1.0",
 ]
 
 [project.scripts]
+applytex = "latex_resume.engine:main"
+applytex-api = "latex_resume.api:run"
+applytex-benchmark = "latex_resume.benchmark.cli:main"
 latex-resume = "latex_resume.engine:main"
+latex-resume-api = "latex_resume.api:run"
+smartjob-benchmark = "latex_resume.benchmark.cli:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
+]
+benchmark = [
+    "fastembed>=0.7",
 ]
 
 [build-system]
@@ -27,3 +51,9 @@ packages = ["src/latex_resume"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.uv]
+prerelease = "allow"
+environments = [
+    "sys_platform != 'win32' and python_version < '3.14'",
+]

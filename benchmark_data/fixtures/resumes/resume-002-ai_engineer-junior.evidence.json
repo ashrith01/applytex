@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-002-ai_engineer-junior",
+  "skills": [
+    "Python",
+    "FastAPI",
+    "Generative AI",
+    "RAG",
+    "LangChain",
+    "OpenAI",
+    "Vector Databases",
+    "Git",
+    "Docker",
+    "Azure"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "healthcare"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "12\\%",
+    "18\\%",
+    "2 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "API development": [
+      "FastAPI"
+    ],
+    "cloud-native": [
+      "Docker",
+      "Azure"
+    ],
+    "LLM applications": [
+      "RAG",
+      "LangChain"
+    ]
+  },
+  "allowed_claims": [
+    "Built retrieval-augmented assistants grounded in curated knowledge bases",
+    "Developed API services for integrating language-model workflows into applications",
+    "Evaluated response quality, retrieval relevance, and production failure modes",
+    "API development",
+    "LLM applications",
+    "cloud-native"
+  ],
+  "synthetic": true
+}

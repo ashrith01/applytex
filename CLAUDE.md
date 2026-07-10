@@ -29,7 +29,9 @@ discards the original document and re-renders structured JSON through a template
 6. ENFORCE     page_count > 1  ->  block confirm / suggest layout changes
 ```
 
-Stage 3 (LLM) and the HTTP/UI layers are **not yet built** — see Roadmap.
+Stage 3 (LLM), the local HTTP layer, Streamlit MVP, model routing, tracing, and
+benchmark harness are implemented for local development. SmartJobApply
+persistence, authentication, and production approval workflows are not built yet.
 
 ---
 
@@ -43,9 +45,9 @@ Stage 3 (LLM) and the HTTP/UI layers are **not yet built** — see Roadmap.
 
 2. **Editable vs locked.** Only these section types are editable:
    `summary`, `work_experience`, `projects`, `skills`. These are permanently locked
-   and never enter `stmt_index`: `education`, `certifications`, `personal_info`, and
-   any `unknown`-classified section. Locked statements are also rejected defensively
-   in `apply_changes`.
+   and never enter `stmt_index`: `education`, `certifications`, `publications`,
+   `personal_info`, and any `unknown`-classified section. Locked statements are also
+   rejected defensively in `apply_changes` / optimizer validation.
 
 3. **One-page hard limit.** A tailored resume that compiles to more than one page must
    not be confirmable. `renderer.check_one_page` returns `overflow=True` (via pdflatex
@@ -65,6 +67,12 @@ Stage 3 (LLM) and the HTTP/UI layers are **not yet built** — see Roadmap.
 | `src/latex_resume/reconstructor.py` | `apply_changes()` (splice), `set_layout_params()` (preamble block insert/replace). |
 | `src/latex_resume/renderer.py` | `render_pdf()` (pdflatex subprocess + pypdf page count), `check_one_page()` (with word-count fallback). |
 | `src/latex_resume/engine.py` | Facade (`parse_file`, `reconstruct`) + CLI smoke test. |
+| `src/latex_resume/extractor.py` | Full read-only resume extraction with LaTeX stripped for display/ATS context. |
+| `src/latex_resume/optimizer.py` | Experimental LLM optimization orchestration, validation, ATS before/after scoring. |
+| `src/latex_resume/llm.py` | Wired JSON LLM backends: Groq, Anthropic, Ollama. OpenAI/Gemini are placeholders. |
+| `src/latex_resume/ats.py` | Deterministic keyword/skill match scoring. |
+| `src/latex_resume/session.py` | In-memory FastAPI session store. |
+| `src/latex_resume/api.py` | Local FastAPI upload/optimize/status/rerender/delete routes. |
 
 ---
 
@@ -107,10 +115,11 @@ LaTeX-dependent tests are marked and auto-skip when `pdflatex` is not on PATH.
 ## Roadmap
 
 - **Increment 1 (done):** core engine — parse, classify, reconstruct, render, one-page check.
-- **Increment 2:** LLM optimize layer + skills matching + JD keyword extraction + FastAPI
-  router (`/latex/upload`, `/latex/optimize`, `/latex/{id}/rerender`). Reuse logic ported
-  from `Resume-Matcher/apps/backend/app/services/improver.py` (`extract_job_keywords`,
-  `generate_skill_target_plan`, `verify_skill_target_plan`, the 4-gate `apply_diffs`).
+- **Increment 2 (MVP):** LLM optimization, skill confirmation, JD extraction,
+  recruiter review, Streamlit UI, FastAPI routes, tracing, and benchmark tooling
+  exist for local development. Remaining work: persistence, authentication,
+  production hardening, durable approval states, and optional direct
+  OpenAI/Gemini backend implementations.
 - **Increment 3:** Next.js frontend — side-by-side PDF.js view, layout controls, SyncTeX
   hover-highlight overlay (green box per changed statement).
 
@@ -118,7 +127,8 @@ LaTeX-dependent tests are marked and auto-skip when `pdflatex` is not on PATH.
 
 ## Out of Scope (for now)
 
-- Custom resume-template commands (`\resumeItem`, `\cventry`, `\cvevent`) — only standard
-  `\item` + list environments (`itemize`, `enumerate`, `cvitems`, `highlights`) are parsed.
-  Add new command grammars in `parser.py` as needed.
+- Custom resume-template commands beyond `\resumeItem`, `\cventry`, `\cvevent`.
+  Standard `\item`, `\resumeItem{...}`, and list environments (`itemize`,
+  `enumerate`, `cvitems`, `highlights`) are parsed. Add new command grammars in
+  `parser.py` as needed.
 - PDF → LaTeX recovery (only `.tex` upload is supported in the engine core).

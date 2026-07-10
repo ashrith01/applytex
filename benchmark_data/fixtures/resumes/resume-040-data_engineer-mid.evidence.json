@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-040-data_engineer-mid",
+  "skills": [
+    "Python",
+    "SQL",
+    "Spark",
+    "Airflow",
+    "Databricks",
+    "AWS",
+    "Docker"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "technology"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "28\\%",
+    "30\\%",
+    "7 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "cloud-native": [
+      "AWS",
+      "Docker"
+    ]
+  },
+  "allowed_claims": [
+    "Built reliable batch pipelines for analytics and machine learning datasets",
+    "Designed tested data models and reusable transformations for downstream teams",
+    "Improved pipeline observability, recovery, and data-quality validation",
+    "data pipelines",
+    "cloud platform",
+    "production reliability"
+  ],
+  "synthetic": true
+}

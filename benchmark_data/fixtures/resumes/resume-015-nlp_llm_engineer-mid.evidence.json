@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-015-nlp_llm_engineer-mid",
+  "skills": [
+    "Python",
+    "PyTorch",
+    "NLP",
+    "LLMs",
+    "Transformers",
+    "Hugging Face",
+    "RAG",
+    "Embeddings",
+    "Vector Databases",
+    "LangGraph"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "security"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "22\\%",
+    "28\\%",
+    "6 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "LLM applications": [
+      "LLMs",
+      "RAG"
+    ]
+  },
+  "allowed_claims": [
+    "Built language-model applications for retrieval, extraction, and summarization",
+    "Created evaluation datasets for response quality and retrieval relevance",
+    "Applied interpretability and bias checks to language-model workflows",
+    "conversational AI",
+    "summarization",
+    "LLM applications"
+  ],
+  "synthetic": true
+}

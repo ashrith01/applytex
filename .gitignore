@@ -8,7 +8,7 @@ dist/
 build/
 
 # uv
-uv.lock
+# Commit uv.lock for reproducible application installs.
 
 # LaTeX aux files
 *.aux
@@ -22,5 +22,40 @@ uv.lock
 # Engine output
 samples/out/
 
+# Local/private smoke-test inputs
+samples/resume.tex
+jd.txt
+trst.py
+
+# Benchmark outputs and licensed/public-web snapshots
+benchmark_data/live_jds/
+benchmark_data/cache/
+benchmark_data/results/
+benchmark_data/reviews/private/
+benchmark_data/reviews/review_queue.csv
+benchmark_data/reviews/blind_map.json
+benchmark_data/taxonomy/raw/
+
+# Environment / secrets (never commit real keys)
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+
+# Local editor and browser state
+.claude/settings.local.json
+.playwright-mcp/
+.applytex/
+.smartjobapply/
+
 # OS
 .DS_Store
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Local QA artifacts
+output/

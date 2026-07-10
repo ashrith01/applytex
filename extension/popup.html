@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ApplyTeX ATS</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header>
+      <div>
+        <strong>ApplyTeX ATS</strong>
+        <small>LaTeX resume gate</small>
+      </div>
+      <span id="backend-status" class="status">Checking local API</span>
+    </header>
+
+    <main>
+      <section class="step-section">
+        <div class="section-heading">
+          <h1><span>1</span> Capture job</h1>
+          <span id="provider-label" class="provider">Unknown board</span>
+        </div>
+        <p id="page-title">Open a LinkedIn, Greenhouse, Lever, or Ashby job.</p>
+        <div id="job-card" class="job-card" hidden></div>
+        <button id="capture-job" type="button">Capture this job</button>
+        <button id="show-panel" class="secondary" type="button" disabled>Open page panel</button>
+      </section>
+
+      <section class="step-section">
+        <div class="section-heading">
+          <h2><span>2</span> Resume source</h2>
+          <span id="resume-status">No resume</span>
+        </div>
+        <label class="field-label" for="profile-id">Username</label>
+        <input id="profile-id" type="text" autocomplete="off" placeholder="ashrithvadde">
+        <label class="file-row" for="profile-resume-file">
+          <span>Resume file (.tex preferred)</span>
+          <input id="profile-resume-file" type="file" accept=".tex,.pdf">
+        </label>
+        <button id="upload-profile-resume" class="secondary" type="button">Save resume source</button>
+      </section>
+
+      <section class="step-section">
+        <div class="section-heading">
+          <h2><span>3</span> Prepare resume</h2>
+          <span id="resume-mode-label">Ask first</span>
+        </div>
+        <label class="check-row">
+          <input id="customize-resume" type="checkbox" checked>
+          <span>Ask before tailoring editable statements</span>
+        </label>
+        <button id="prepare-resume" type="button" disabled>Prepare resume</button>
+      </section>
+
+      <section class="step-section">
+        <div class="section-heading">
+          <h2><span>4</span> Review form</h2>
+          <span id="field-count">0 fields</span>
+        </div>
+        <div class="progress-wrap">
+          <div id="progress-label">0/0 required fields filled</div>
+          <div class="progress-track"><div id="progress-bar"></div></div>
+        </div>
+        <div id="profile-setup" class="review-list" hidden></div>
+        <button id="scan-form" type="button">Scan visible form</button>
+        <div id="fill-review" class="review-list" hidden></div>
+        <button id="fill-form" class="secondary" type="button" disabled>Fill reviewed fields</button>
+      </section>
+
+      <p id="message" role="status"></p>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

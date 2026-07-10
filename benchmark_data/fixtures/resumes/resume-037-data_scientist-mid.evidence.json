@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-037-data_scientist-mid",
+  "skills": [
+    "Python",
+    "SQL",
+    "Pandas",
+    "Scikit-learn",
+    "Statistics",
+    "A/B Testing",
+    "Predictive Modeling",
+    "Machine Learning",
+    "Git",
+    "Tableau"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "saas"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "25\\%",
+    "27\\%",
+    "4 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {},
+  "allowed_claims": [
+    "Developed predictive analyses that translated operational data into decisions",
+    "Designed experiments and communicated statistically grounded recommendations",
+    "Partnered with product stakeholders to define measurable model outcomes",
+    "experimentation",
+    "stakeholder communication",
+    "model evaluation"
+  ],
+  "synthetic": true
+}

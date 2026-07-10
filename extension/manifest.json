@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "ApplyTeX ATS",
+  "version": "0.1.0",
+  "description": "Capture jobs and inspect application forms with a local ApplyTeX ATS backend.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+    "https://www.linkedin.com/*",
+    "https://*.greenhouse.io/*",
+    "https://*.lever.co/*",
+    "https://*.ashbyhq.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open ApplyTeX ATS"
+  }
+}

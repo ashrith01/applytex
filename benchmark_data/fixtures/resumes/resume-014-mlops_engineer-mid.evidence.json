@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-014-mlops_engineer-mid",
+  "skills": [
+    "Python",
+    "MLflow",
+    "Docker",
+    "Kubernetes",
+    "CI/CD",
+    "AWS",
+    "Terraform"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "retail"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "21\\%",
+    "27\\%",
+    "5 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "cloud-native": [
+      "Docker",
+      "AWS"
+    ],
+    "model monitoring": [
+      "MLflow"
+    ]
+  },
+  "allowed_claims": [
+    "Automated model packaging, validation, deployment, and rollback workflows",
+    "Built observability for data quality, service health, and model performance",
+    "Standardized reproducible infrastructure for training and inference workloads",
+    "ML lifecycle",
+    "cloud platform",
+    "deployment automation"
+  ],
+  "synthetic": true
+}

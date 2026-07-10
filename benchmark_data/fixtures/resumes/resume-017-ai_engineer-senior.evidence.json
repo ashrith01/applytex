@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-017-ai_engineer-senior",
+  "skills": [
+    "Python",
+    "MLflow",
+    "Docker",
+    "Kubernetes",
+    "CI/CD"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "healthcare"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "24\\%",
+    "30\\%",
+    "2 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "cloud-native": [
+      "Docker"
+    ],
+    "model monitoring": [
+      "MLflow"
+    ]
+  },
+  "allowed_claims": [
+    "Built retrieval-augmented assistants grounded in curated knowledge bases",
+    "Developed API services for integrating language-model workflows into applications",
+    "Evaluated response quality, retrieval relevance, and production failure modes",
+    "API development",
+    "LLM applications",
+    "cloud-native"
+  ],
+  "synthetic": true
+}

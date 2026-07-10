@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-038-mlops_engineer-mid",
+  "skills": [
+    "Python",
+    "FastAPI",
+    "Generative AI",
+    "RAG",
+    "LangChain"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "retail"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "26\\%",
+    "28\\%",
+    "5 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "API development": [
+      "FastAPI"
+    ],
+    "LLM applications": [
+      "RAG",
+      "LangChain"
+    ]
+  },
+  "allowed_claims": [
+    "Automated model packaging, validation, deployment, and rollback workflows",
+    "Built observability for data quality, service health, and model performance",
+    "Standardized reproducible infrastructure for training and inference workloads",
+    "ML lifecycle",
+    "cloud platform",
+    "deployment automation"
+  ],
+  "synthetic": true
+}

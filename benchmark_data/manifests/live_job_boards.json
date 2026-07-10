@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {"provider": "greenhouse", "site": "anthropic", "company": "Anthropic", "industry": "technology"},
+    {"provider": "greenhouse", "site": "datadog", "company": "Datadog", "industry": "saas"},
+    {"provider": "greenhouse", "site": "mongodb", "company": "MongoDB", "industry": "saas"},
+    {"provider": "greenhouse", "site": "sumologic", "company": "Sumo Logic", "industry": "security"},
+    {"provider": "greenhouse", "site": "twilio", "company": "Twilio", "industry": "saas"},
+    {"provider": "greenhouse", "site": "faire", "company": "Faire", "industry": "retail"},
+    {"provider": "lever", "site": "highspot", "company": "Highspot", "industry": "saas"},
+    {"provider": "ashby", "site": "airops", "company": "AirOps", "industry": "saas"},
+    {"provider": "ashby", "site": "modal", "company": "Modal", "industry": "technology"},
+    {"provider": "ashby", "site": "perplexity", "company": "Perplexity", "industry": "technology"},
+    {"provider": "ashby", "site": "openai", "company": "OpenAI", "industry": "technology"}
+  ]
+}

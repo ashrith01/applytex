@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-023-ai_engineer-staff",
+  "skills": [
+    "Python",
+    "FastAPI",
+    "Generative AI",
+    "RAG",
+    "Excel",
+    "Data Visualization"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "healthcare"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "30\\%",
+    "36\\%",
+    "2 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "API development": [
+      "FastAPI"
+    ],
+    "LLM applications": [
+      "RAG"
+    ]
+  },
+  "allowed_claims": [
+    "Built retrieval-augmented assistants grounded in curated knowledge bases",
+    "Developed API services for integrating language-model workflows into applications",
+    "Evaluated response quality, retrieval relevance, and production failure modes",
+    "API development",
+    "LLM applications",
+    "cloud-native"
+  ],
+  "synthetic": true
+}

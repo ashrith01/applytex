@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-010-data_engineer-junior",
+  "skills": [
+    "Python",
+    "SQL",
+    "Spark",
+    "Airflow",
+    "Databricks",
+    "AWS",
+    "Docker",
+    "PostgreSQL",
+    "ETL",
+    "Data Modeling"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "technology"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "17\\%",
+    "23\\%",
+    "7 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "cloud-native": [
+      "AWS",
+      "Docker"
+    ]
+  },
+  "allowed_claims": [
+    "Built reliable batch pipelines for analytics and machine learning datasets",
+    "Designed tested data models and reusable transformations for downstream teams",
+    "Improved pipeline observability, recovery, and data-quality validation",
+    "data pipelines",
+    "cloud platform",
+    "production reliability"
+  ],
+  "synthetic": true
+}

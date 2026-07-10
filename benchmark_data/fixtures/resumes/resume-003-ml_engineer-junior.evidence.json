@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-003-ml_engineer-junior",
+  "skills": [
+    "Python",
+    "PyTorch",
+    "NLP",
+    "LLMs",
+    "Transformers"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "finance"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "13\\%",
+    "19\\%",
+    "3 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "LLM applications": [
+      "LLMs"
+    ]
+  },
+  "allowed_claims": [
+    "Built training and inference pipelines for supervised machine learning models",
+    "Served validated models through APIs with repeatable deployment workflows",
+    "Monitored model quality and investigated performance regressions",
+    "API development",
+    "model monitoring",
+    "ML lifecycle"
+  ],
+  "synthetic": true
+}

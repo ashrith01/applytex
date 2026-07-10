@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-035-ai_engineer-mid",
+  "skills": [
+    "Python",
+    "FastAPI",
+    "Generative AI",
+    "RAG",
+    "LangChain",
+    "OpenAI",
+    "Vector Databases"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "healthcare"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "23\\%",
+    "25\\%",
+    "2 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "API development": [
+      "FastAPI"
+    ],
+    "LLM applications": [
+      "RAG",
+      "LangChain"
+    ]
+  },
+  "allowed_claims": [
+    "Built retrieval-augmented assistants grounded in curated knowledge bases",
+    "Developed API services for integrating language-model workflows into applications",
+    "Evaluated response quality, retrieval relevance, and production failure modes",
+    "API development",
+    "LLM applications",
+    "cloud-native"
+  ],
+  "synthetic": true
+}

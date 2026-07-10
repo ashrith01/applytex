@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-022-data_engineer-senior",
+  "skills": [
+    "Python",
+    "SQL",
+    "Pandas",
+    "Scikit-learn",
+    "Statistics"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "technology"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "29\\%",
+    "35\\%",
+    "7 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {},
+  "allowed_claims": [
+    "Built reliable batch pipelines for analytics and machine learning datasets",
+    "Designed tested data models and reusable transformations for downstream teams",
+    "Improved pipeline observability, recovery, and data-quality validation",
+    "data pipelines",
+    "cloud platform",
+    "production reliability"
+  ],
+  "synthetic": true
+}

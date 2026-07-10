@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-ui: "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+}
+
+body {
+  @apply bg-surface text-ink antialiased;
+  background: #fbfaf7;
+  color: #17201b;
+  font-family: var(--font-ui);
+  font-feature-settings: "ss01" 1, "cv05" 1;
+}
+
+a {
+  @apply text-inherit no-underline;
+}
+
+.font-serif {
+  font-family: var(--font-display);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #2457a6;
+  outline-offset: 2px;
+}
+
+::selection {
+  background: #d9eadf;
+}

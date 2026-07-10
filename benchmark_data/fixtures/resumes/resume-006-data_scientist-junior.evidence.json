@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-006-data_scientist-junior",
+  "skills": [
+    "Python",
+    "SQL",
+    "Pandas",
+    "Scikit-learn",
+    "Excel",
+    "Data Visualization"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "saas"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "14\\%",
+    "20\\%",
+    "4 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {},
+  "allowed_claims": [
+    "Developed predictive analyses that translated operational data into decisions",
+    "Designed experiments and communicated statistically grounded recommendations",
+    "Partnered with product stakeholders to define measurable model outcomes",
+    "experimentation",
+    "stakeholder communication",
+    "model evaluation"
+  ],
+  "synthetic": true
+}

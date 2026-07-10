@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-027-nlp_llm_engineer-staff",
+  "skills": [
+    "Python",
+    "PyTorch",
+    "Scikit-learn",
+    "SQL",
+    "FastAPI"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "security"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "15\\%",
+    "40\\%",
+    "6 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {
+    "API development": [
+      "FastAPI"
+    ]
+  },
+  "allowed_claims": [
+    "Built language-model applications for retrieval, extraction, and summarization",
+    "Created evaluation datasets for response quality and retrieval relevance",
+    "Applied interpretability and bias checks to language-model workflows",
+    "conversational AI",
+    "summarization",
+    "LLM applications"
+  ],
+  "synthetic": true
+}

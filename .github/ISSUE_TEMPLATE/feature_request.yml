@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose a focused improvement to ApplyTeX ATS.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the expected workflow and safety constraints.
+    validations:
+      required: true
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Invariants
+      options:
+        - label: This can preserve source formatting and locked sections.
+        - label: This does not require fabricated resume claims.
+        - label: This can be evaluated with automated or human-review metrics.

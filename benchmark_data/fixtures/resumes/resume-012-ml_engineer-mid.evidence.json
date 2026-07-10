@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "resume_id": "resume-012-ml_engineer-mid",
+  "skills": [
+    "Python",
+    "PyTorch",
+    "Scikit-learn",
+    "SQL",
+    "Excel",
+    "Data Visualization"
+  ],
+  "employers": [
+    "Synthetic Analytics Studio",
+    "Open Systems Laboratory"
+  ],
+  "domains": [
+    "finance"
+  ],
+  "education": [
+    "B.S. Computer Science"
+  ],
+  "metrics": [
+    "19\\%",
+    "25\\%",
+    "3 pipelines"
+  ],
+  "certifications": [],
+  "supported_equivalents": {},
+  "allowed_claims": [
+    "Built training and inference pipelines for supervised machine learning models",
+    "Served validated models through APIs with repeatable deployment workflows",
+    "Monitored model quality and investigated performance regressions",
+    "API development",
+    "model monitoring",
+    "ML lifecycle"
+  ],
+  "synthetic": true
+}

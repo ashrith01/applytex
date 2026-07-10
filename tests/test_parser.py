@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from latex_resume.models import ParseResult, SectionType
-from latex_resume.parser import detect_class
+from latex_resume.extractor import extract_full_resume
+from latex_resume.parser import detect_class, parse
 
 
 def _section(pr: ParseResult, section_type: SectionType):
@@ -64,10 +65,38 @@ def test_skills_lines(parsed: ParseResult) -> None:
     assert "Python" in skills.skill_lines[0].text
 
 
+def test_skills_section_handles_small_wrapper_and_commented_tail() -> None:
+    tex = r"""
+\documentclass{article}
+\begin{document}
+\section{Skills}
+\small{
+\textbf{LLMs \& Agentic AI:} OpenAI, Claude, LangChain, AutoGen \\[-1pt]
+\textbf{ML / DL:} PyTorch, Hugging Face Transformers \\[-1pt]
+\textbf{Languages:} Python, SQL
+}
+\vspace{-4mm}
+%----------CERTIFICATIONS----------
+% \section{Certifications}
+% \textbf{AWS Certified Cloud Practitioner}
+\end{document}
+"""
+    parsed = parse(tex)
+    skills = _section(parsed, SectionType.SKILLS)
+    extracted = extract_full_resume(parsed)["skills"]
+
+    assert len(skills.skill_lines) == 3
+    assert "LLMs" in skills.skill_lines[0].text
+    assert "AWS Certified" not in " ".join(line.text for line in skills.skill_lines)
+    assert extracted["LLMs & Agentic AI"] == "OpenAI, Claude, LangChain, AutoGen"
+    assert extracted["ML / DL"] == "PyTorch, Hugging Face Transformers"
+
+
 def test_locked_sections_not_indexed(parsed: ParseResult) -> None:
     for stmt_id in parsed.stmt_index:
         assert not stmt_id.startswith("edu_")
         assert not stmt_id.startswith("cert_")
+        assert not stmt_id.startswith("pub_")
         assert not stmt_id.startswith("personal")
 
 
@@ -86,3 +115,41 @@ def test_editable_statements_excludes_locked(parsed: ParseResult) -> None:
     assert "summary_0" in ids
     assert "work_0_2" in ids
     assert not any(i.startswith("edu_") or i.startswith("cert_") for i in ids)
+
+
+def test_commented_out_sections_are_ignored(sample_tex: str) -> None:
+    tex = sample_tex.replace(
+        "\\section{Experience}",
+        "% \\section{Projects}\n"
+        "% \\begin{itemize}\n"
+        "%   \\item This old commented bullet must not be parsed.\n"
+        "% \\end{itemize}\n"
+        "\\section{Experience}",
+        1,
+    )
+    pr = parse(tex)
+    assert "This old commented bullet must not be parsed." not in {
+        span.original_text for span in pr.stmt_index.values()
+    }
+    project_sections = [
+        s for s in pr.doc.sections if s.section_type == SectionType.PROJECTS
+    ]
+    assert len(project_sections) == 1
+
+
+def test_summary_span_preserves_text_size_wrapper() -> None:
+    resume_tex = r"""
+\documentclass{article}
+\begin{document}
+\section{Summary}
+\small{AI/ML Engineer building evidence-grounded systems.}
+\section{Education}
+B.S. Computer Science
+\end{document}
+"""
+    pr = parse(resume_tex)
+    span = pr.stmt_index["summary_0"]
+    assert not span.original_text.startswith("\\small{")
+    assert span.original_text.startswith("AI/ML Engineer")
+    assert resume_tex[span.tex_start - len("\\small{") : span.tex_start] == "\\small{"
+    assert resume_tex[span.tex_end] == "}"
