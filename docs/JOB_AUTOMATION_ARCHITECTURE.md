@@ -12,18 +12,26 @@ Implemented:
 - partial-source failure reporting;
 - SQLite persistence for searches, jobs, and applications;
 - persistent role, geography, and internship authorization preferences;
-- a Manifest V3 Chrome extension for LinkedIn, Greenhouse, and Lever;
+- a Manifest V3 Chrome extension for LinkedIn, Greenhouse, Lever, Ashby,
+  Workday, iCIMS, SmartRecruiters, Workable, Indeed, ZipRecruiter, Glassdoor,
+  Wellfound, and Dice;
 - deterministic form-answer planning that leaves unknown answers unresolved;
 - optional local-only EEO answers that require explicit autofill consent;
-- reviewed form filling with no final-submit capability;
+- reviewed form filling, profile resume upload, and guided LaTeX tailoring with
+  no final-submit capability;
+- same-origin iframe and open Shadow DOM scanning, excluding other extensions;
+- repeatable education/work record selection and Workday date/skills handling;
 - a validated application state machine;
 - an explicit approval requirement before submission can begin.
 
 Not implemented:
 
-- resume upload to an application form;
 - account creation or login automation;
 - final submission.
+
+Live production verification remains incomplete for signed-in Workday steps and
+for Workable, Indeed, ZipRecruiter, Glassdoor, Wellfound, and Dice. See
+[`JOBRIGHT_AND_ATS_AUDIT.md`](JOBRIGHT_AND_ATS_AUDIT.md) for the evidence matrix.
 
 ## State Machine
 
@@ -51,10 +59,10 @@ There is intentionally no transition from `ready_for_review` directly to
 
 ## Planned Phases
 
-1. Resume optimization and upload integration.
-2. Better site-specific field and multi-step form adapters.
-3. User-editable fill-plan review.
-4. Pause/resume, retries, and failure recovery.
+1. Complete signed-in Workday and remaining-provider live smoke tests.
+2. Add more site-specific multi-step guidance as production workflows require.
+3. Add user-editable fill-plan answers before browser execution.
+4. Add pause/resume, retries, and failure recovery.
 
 ## Safety Rules
 

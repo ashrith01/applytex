@@ -8,7 +8,8 @@ interface FitScoreHeroProps {
 
 export function FitScoreHero({ score, title, subtitle }: FitScoreHeroProps) {
   return (
-    <div className="grid gap-6 rounded-card border border-border bg-surface-card p-6 md:grid-cols-[1fr_auto] md:p-8">
+    <div className="relative grid gap-6 overflow-hidden rounded-card border border-border bg-surface-card p-6 pl-7 md:grid-cols-[1fr_auto] md:p-8 md:pl-9">
+      <div className="absolute inset-y-0 left-0 w-2 bg-primary" aria-hidden="true" />
       <div>
         <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-ink-muted">evidence match</p>
         <h1 className="mt-2 font-serif text-3xl font-black leading-tight text-ink md:text-4xl">

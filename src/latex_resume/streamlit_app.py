@@ -101,7 +101,7 @@ def _bool_to_choice(value: bool | None) -> str:
         return "Yes"
     if value is False:
         return "No"
-    return "Prefer not to answer"
+    return "Not answered"
 
 
 def _choice_to_bool(value: str) -> bool | None:
@@ -371,7 +371,10 @@ def _render_equal_employment_view(profile: CandidateProfile) -> None:
     st.header("Equal Employment")
     rows = [
         ("Are you authorized to work in the US?", _bool_to_choice(profile.work_authorization.authorized_to_work_in_us)),
-        ("Do you require sponsorship for this role?", _bool_to_choice(profile.work_authorization.requires_sponsorship)),
+        ("Do you currently require sponsorship?", _bool_to_choice(profile.work_authorization.current_requires_sponsorship)),
+        ("Will you require sponsorship in the future?", _bool_to_choice(profile.work_authorization.future_requires_sponsorship)),
+        ("Are you willing to relocate?", _bool_to_choice(profile.application_facts.willing_to_relocate)),
+        ("Are you willing to travel?", _bool_to_choice(profile.application_facts.willing_to_travel)),
         ("Do you have a disability?", profile.equal_opportunity.disability or ""),
         ("What is your gender?", profile.equal_opportunity.gender or ""),
         ("Are you a veteran?", profile.equal_opportunity.veteran_status or ""),
@@ -482,7 +485,10 @@ def _render_profile_editor(profile: CandidateProfile) -> CandidateProfile | None
                 updated.email = st.text_input("Email", value=profile.email).strip()
                 updated.phone = st.text_input("Phone", value=profile.phone).strip()
                 updated.location = st.text_input("Current location", value=profile.location).strip()
+                updated.address.line1 = st.text_input("Address line 1", value=profile.address.line1).strip()
+                updated.address.line2 = st.text_input("Address line 2", value=profile.address.line2).strip()
                 updated.address.city = st.text_input("City", value=profile.address.city).strip()
+                updated.address.county = st.text_input("County", value=profile.address.county).strip()
                 updated.address.state = st.text_input("State", value=profile.address.state).strip()
                 updated.address.postal_code = st.text_input("ZIP / postal code", value=profile.address.postal_code).strip()
                 updated.address.country = st.text_input("Country", value=profile.address.country).strip() or "United States"
@@ -565,14 +571,57 @@ def _render_profile_editor(profile: CandidateProfile) -> CandidateProfile | None
                     if item.strip()
                 ]
             elif section == "eeo":
+                auth_options = ["Not answered", "Yes", "No"]
                 updated.work_authorization.authorized_to_work_in_us = _choice_to_bool(
-                    st.selectbox("Are you authorized to work in the US?", ["Yes", "No"], index=_option_index(["Yes", "No"], _bool_to_choice(profile.work_authorization.authorized_to_work_in_us)))
+                    st.selectbox(
+                        "Are you authorized to work in the US?",
+                        auth_options,
+                        index=_option_index(
+                            auth_options,
+                            _bool_to_choice(profile.work_authorization.authorized_to_work_in_us),
+                        ),
+                    )
                 )
-                updated.work_authorization.requires_sponsorship = _choice_to_bool(
-                    st.selectbox("Do you require sponsorship for this role?", ["No", "Yes"], index=_option_index(["No", "Yes"], _bool_to_choice(profile.work_authorization.requires_sponsorship)))
+                updated.work_authorization.current_requires_sponsorship = _choice_to_bool(
+                    st.selectbox(
+                        "Do you currently require sponsorship?",
+                        auth_options,
+                        index=_option_index(
+                            auth_options,
+                            _bool_to_choice(profile.work_authorization.current_requires_sponsorship),
+                        ),
+                    )
                 )
-                updated.work_authorization.internship_requires_sponsorship = updated.work_authorization.requires_sponsorship
-                updated.work_authorization.full_time_requires_sponsorship = updated.work_authorization.requires_sponsorship
+                updated.work_authorization.future_requires_sponsorship = _choice_to_bool(
+                    st.selectbox(
+                        "Will you require sponsorship in the future?",
+                        auth_options,
+                        index=_option_index(
+                            auth_options,
+                            _bool_to_choice(profile.work_authorization.future_requires_sponsorship),
+                        ),
+                    )
+                )
+                updated.application_facts.willing_to_relocate = _choice_to_bool(
+                    st.selectbox(
+                        "Are you willing to relocate?",
+                        auth_options,
+                        index=_option_index(
+                            auth_options,
+                            _bool_to_choice(profile.application_facts.willing_to_relocate),
+                        ),
+                    )
+                )
+                updated.application_facts.willing_to_travel = _choice_to_bool(
+                    st.selectbox(
+                        "Are you willing to travel?",
+                        auth_options,
+                        index=_option_index(
+                            auth_options,
+                            _bool_to_choice(profile.application_facts.willing_to_travel),
+                        ),
+                    )
+                )
                 updated.equal_opportunity.allow_autofill = st.checkbox("Allow voluntary EEO autofill", value=profile.equal_opportunity.allow_autofill)
                 updated.equal_opportunity.gender = st.selectbox("What is your gender?", ["", "Male", "Female", "Non-binary", "Prefer not to answer"], index=_option_index(["", "Male", "Female", "Non-binary", "Prefer not to answer"], profile.equal_opportunity.gender)) or None
                 updated.equal_opportunity.disability = st.selectbox("Do you have a disability?", ["", "No", "Yes", "Prefer not to answer"], index=_option_index(["", "No", "Yes", "Prefer not to answer"], profile.equal_opportunity.disability)) or None
@@ -587,7 +636,7 @@ def _render_profile_editor(profile: CandidateProfile) -> CandidateProfile | None
                 updated.search_preferences.allow_remote_us = st.checkbox("Remote US", value=profile.search_preferences.allow_remote_us)
                 updated.search_preferences.allow_hybrid = st.checkbox("Hybrid", value=profile.search_preferences.allow_hybrid)
                 updated.search_preferences.allow_onsite = st.checkbox("Onsite", value=profile.search_preferences.allow_onsite)
-                updated.search_preferences.willing_to_relocate = st.checkbox("Open to relocate", value=profile.search_preferences.willing_to_relocate)
+                updated.search_preferences.willing_to_relocate = st.checkbox("Open to relocate for job discovery", value=bool(profile.search_preferences.willing_to_relocate))
                 updated.search_preferences.accepted_employment_types = st.multiselect("Employment types", options=["internship", "full_time"], default=profile.search_preferences.accepted_employment_types) or ["internship"]
             saved = st.form_submit_button("Update", type="primary")
     if saved:

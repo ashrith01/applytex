@@ -25,7 +25,11 @@ from latex_resume.job_models import (
     TargetRole,
     WorkAuthorizationProfile,
 )
-from latex_resume.form_resolution import resolve_form_questions
+from latex_resume.form_resolution import (
+    classify_question_intent,
+    is_question_draft_eligible,
+    resolve_form_questions,
+)
 from latex_resume.job_matching import (
     classify_employment_track,
     classify_target_role,
@@ -229,6 +233,9 @@ def test_target_role_and_texas_location_matching() -> None:
     assert classify_target_role("Machine Learning Engineer") is TargetRole.ML_ENGINEER
     assert classify_employment_track("NLP Internship") == "internship"
 
+    preferences = SearchPreferences(
+        preferred_locations=["Houston, TX", "Austin, TX", "Dallas, TX", "Remote - US"],
+    )
     job = JobPosting(
         job_id="austin-job",
         provider=JobProvider.LEVER,
@@ -242,7 +249,7 @@ def test_target_role_and_texas_location_matching() -> None:
         source_url="https://example.test/job",
         apply_url="https://example.test/apply",
     )
-    assert location_matches(job, SearchPreferences()) is True
+    assert location_matches(job, preferences) is True
     assert location_matches(
         job.model_copy(
             update={
@@ -250,12 +257,14 @@ def test_target_role_and_texas_location_matching() -> None:
                 "description": "New York onsite role supporting remote customers in the United States.",
             }
         ),
-        SearchPreferences(),
+        preferences,
     ) is False
 
 
 def test_senior_staff_and_manager_titles_are_excluded() -> None:
-    preferences = SearchPreferences()
+    preferences = SearchPreferences(
+        excluded_title_terms=["senior", "sr", "staff", "manager"],
+    )
     assert title_is_excluded("Senior AI Engineer", preferences) is True
     assert title_is_excluded("Sr. Machine Learning Engineer", preferences) is True
     assert title_is_excluded("Staff Data Scientist", preferences) is True
@@ -277,6 +286,13 @@ def test_senior_staff_and_manager_titles_are_excluded() -> None:
         apply_url="https://example.test/apply",
     )
     assert preference_score(senior_job, preferences) == -1.0
+
+
+def test_default_preferences_do_not_exclude_senior_titles() -> None:
+    preferences = SearchPreferences()
+    assert preferences.excluded_title_terms == []
+    assert title_is_excluded("Senior AI Engineer", preferences) is False
+    assert preferences.preferred_locations == ["Remote - US"]
 
 
 def test_form_resolution_uses_single_sponsorship_answer() -> None:
@@ -339,6 +355,106 @@ def test_form_resolution_uses_single_sponsorship_answer() -> None:
         employment_track="full_time",
     )
     assert known_full_time[2].value == "Yes"
+
+
+def test_workday_application_questions_use_typed_intents_without_record_leaks() -> None:
+    profile = CandidateProfile.model_validate(
+        {
+            "work_authorization": {
+                "authorized_to_work_in_us": True,
+                "current_requires_sponsorship": False,
+                "future_requires_sponsorship": True,
+            },
+            "application_facts": {
+                "is_at_least_18": True,
+                "willing_to_relocate": True,
+                "willing_to_travel": True,
+                "active_non_compete_or_non_solicit": False,
+                "company_relationships": {
+                    "Daikin": {
+                        "currently_employed": False,
+                        "employed_by_affiliate": False,
+                    }
+                },
+                "compensation_preferences": [
+                    {
+                        "employment_type": "internship",
+                        "amount": "75000",
+                        "currency": "USD",
+                        "period": "annual",
+                    }
+                ],
+            },
+            "educations": [
+                {
+                    "school": "University of Houston",
+                    "degree": "M.S. in Engineering Data Science & Artificial Intelligence",
+                    "degree_level": "MS",
+                    "end_date": "2027-05",
+                },
+                {
+                    "school": "Amrita School of Engineering",
+                    "degree": "B.Tech in Computer Science & Engineering",
+                    "degree_level": "BS",
+                    "end_date": "2023-05",
+                },
+            ],
+        }
+    )
+    labels = [
+        "Are you legally eligible to work in the country to which you are applying?*",
+        "Do you currently require sponsorship for work visa status (e.g. H-1B visa) to work in the country you are applying?*",
+        (
+            "Will you in the future require sponsorship for work visa status (e.g. H-1B visa) in the country for which you are applying? "
+            "Please note that if you currently have CPT or OPT work authorization and will not have any other basis for work authorization "
+            "after the expiration of your OPT, you must answer yes to this question.*"
+        ),
+        "Are you at least 18 years of age?*",
+        "What is your highest level of completed education?*",
+        "What is your desired income? (Hourly, Monthly, or Annual)*",
+        "Are you currently employed by Daikin Applied? Internal candidates must apply through the internal Workday Jobs Hub.*",
+        "Are you currently employed by a Daikin Subsidiary, Daikin Majority Owned Representative, or Member of Daikin Group?*",
+        "Are you willing to relocate if required by the position?*",
+        "Are you willing to travel if required by the position?*",
+        "Do you currently have an active non-compete and/or non-solicit?*",
+    ]
+    questions = [
+        FormQuestion(
+            field_id=f"primaryQuestionnaire-{index}",
+            label=label,
+            input_type="textarea" if "desired income" in label.casefold() else "select",
+            required=True,
+            control_kind="scalar" if "desired income" in label.casefold() else "custom_select",
+        )
+        for index, label in enumerate(labels)
+    ]
+
+    actions = resolve_form_questions(
+        questions,
+        profile,
+        employment_track="internship",
+        provider="workday",
+        company="Daikin Careers",
+    )
+
+    assert [action.value for action in actions] == [
+        "Yes",
+        "No",
+        "Yes",
+        "Yes",
+        ["BS", "Bachelor of Science", "Bachelor's Degree"],
+        "75000",
+        "No",
+        "No",
+        "Yes",
+        "Yes",
+        "No",
+    ]
+    assert all(action.action != "skip" for action in actions)
+    assert len(labels[2]) > 320
+    assert classify_question_intent(questions[0]).value == "authorization"
+    assert classify_question_intent(questions[7]).value == "affiliate_employment"
+    assert not is_question_draft_eligible(questions[5])
 
 
 def test_equal_opportunity_answers_require_explicit_opt_in() -> None:
@@ -420,8 +536,13 @@ def test_split_name_and_hispanic_latino_resolution() -> None:
 
 
 def test_relocation_and_long_form_no_option_resolution() -> None:
-    profile = CandidateProfile()
-    profile.search_preferences.willing_to_relocate = True
+    profile = CandidateProfile(
+        work_authorization=WorkAuthorizationProfile(
+            authorized_to_work_in_us=True,
+            requires_sponsorship=False,
+        ),
+    )
+    profile.application_facts.willing_to_relocate = True
     questions = [
         FormQuestion(
             field_id="relocate",
@@ -448,7 +569,130 @@ def test_relocation_and_long_form_no_option_resolution() -> None:
     assert actions[1].value == "No, I do not require sponsorship"
 
 
-def test_restrictive_employer_agreement_questions_resolve_to_no() -> None:
+def test_current_location_and_veteran_radio_resolution() -> None:
+    profile = CandidateProfile(
+        location="Austin, Texas, United States",
+        equal_opportunity=EqualOpportunityProfile(
+            allow_autofill=True,
+            veteran_status="No",
+            race="Asian",
+            hispanic_or_latino="Yes",
+        ),
+    )
+    questions = [
+        FormQuestion(
+            field_id="location",
+            label="Where are you currently located?",
+            input_type="text",
+            required=True,
+        ),
+        FormQuestion(
+            field_id="veteran",
+            label="Veteran Status",
+            input_type="radio",
+            sensitive=True,
+            options=[
+                "I identify as one or more of the classifications of protected veteran listed above",
+                "I am not a protected veteran",
+                "I decline to self-identify for protected veteran status",
+            ],
+        ),
+        FormQuestion(
+            field_id="race",
+            label="Race",
+            input_type="radio",
+            sensitive=True,
+            options=[
+                "Hispanic or Latino",
+                "Asian (Not Hispanic or Latino)",
+                "Decline to self-identify",
+            ],
+        ),
+    ]
+
+    actions = resolve_form_questions(
+        questions,
+        profile,
+        employment_track="full_time",
+    )
+
+    assert actions[0].value == "Austin, Texas, United States"
+    assert actions[1].action == "select"
+    assert actions[1].value == "I am not a protected veteran"
+    assert actions[2].value == "Hispanic or Latino"
+
+
+def test_state_select_uses_the_portals_name_or_postal_code() -> None:
+    state_name_question = FormQuestion(
+        field_id="state-name",
+        label="State",
+        input_type="select",
+        options=["Select one", "Texas", "California"],
+    )
+    state_code_question = FormQuestion(
+        field_id="state-code",
+        label="State / Province",
+        input_type="select",
+        options=["", "TX", "CA"],
+    )
+    state_decorated_question = FormQuestion(
+        field_id="state-decorated",
+        label="State",
+        input_type="select",
+        options=["Select one", "Texas (TX)", "California (CA)"],
+    )
+
+    name_action = resolve_form_questions(
+        [state_name_question],
+        CandidateProfile(address={"state": "TX"}),
+        employment_track="full_time",
+    )[0]
+    code_action = resolve_form_questions(
+        [state_code_question],
+        CandidateProfile(address={"state": "Texas"}),
+        employment_track="full_time",
+    )[0]
+    decorated_action = resolve_form_questions(
+        [state_decorated_question],
+        CandidateProfile(address={"state": "Texas"}),
+        employment_track="full_time",
+    )[0]
+
+    assert name_action.value == "Texas"
+    assert code_action.value == "TX"
+    assert decorated_action.value == "Texas (TX)"
+
+
+def test_country_select_matches_united_states_aliases() -> None:
+    usa_question = FormQuestion(
+        field_id="country",
+        label="Country",
+        input_type="select",
+        options=["Select one", "United States of America", "Canada"],
+    )
+    us_question = FormQuestion(
+        field_id="country-short",
+        label="Country",
+        input_type="select",
+        options=["", "USA", "Canada"],
+    )
+
+    usa_action = resolve_form_questions(
+        [usa_question],
+        CandidateProfile(address={"country": "United States"}),
+        employment_track="full_time",
+    )[0]
+    us_action = resolve_form_questions(
+        [us_question],
+        CandidateProfile(address={"country": "United States of America"}),
+        employment_track="full_time",
+    )[0]
+
+    assert usa_action.value == "United States of America"
+    assert us_action.value == "USA"
+
+
+def test_restrictive_employer_agreement_questions_stay_unresolved() -> None:
     profile = CandidateProfile()
     question = FormQuestion(
         field_id="agreement",
@@ -472,8 +716,62 @@ def test_restrictive_employer_agreement_questions_resolve_to_no() -> None:
         employment_track="internship",
     )
 
+    assert actions[0].action == "skip"
+    assert actions[0].value is None
+
+
+def test_restrictive_employer_agreement_uses_custom_answer() -> None:
+    profile = CandidateProfile(
+        custom_answers={"Bound by restrictive agreements": "No"},
+    )
+    question = FormQuestion(
+        field_id="agreement",
+        label=(
+            "Are you currently bound by any non-compete or confidentiality "
+            "agreement that may restrict your ability to work?"
+        ),
+        input_type="select",
+        required=True,
+        options=["Yes", "No"],
+    )
+
+    actions = resolve_form_questions(
+        [question],
+        profile,
+        employment_track="internship",
+    )
+
     assert actions[0].action == "select"
     assert actions[0].value == "No"
+
+
+def test_empty_profile_leaves_work_authorization_unresolved() -> None:
+    profile = CandidateProfile()
+    questions = [
+        FormQuestion(
+            field_id="auth",
+            label="Are you authorized to work in the United States?",
+            input_type="select",
+            required=True,
+            options=["Yes", "No"],
+        ),
+        FormQuestion(
+            field_id="sponsor",
+            label="Will you require sponsorship?",
+            input_type="select",
+            required=True,
+            options=["Yes", "No"],
+        ),
+    ]
+
+    actions = resolve_form_questions(
+        questions,
+        profile,
+        employment_track="internship",
+    )
+
+    assert actions[0].action == "skip"
+    assert actions[1].action == "skip"
 
 
 def test_generic_name_resume_and_boolean_radio_resolution() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -21,6 +21,15 @@ class JobProvider(str, Enum):
     GREENHOUSE = "greenhouse"
     LEVER = "lever"
     ASHBY = "ashby"
+    WORKDAY = "workday"
+    ICIMS = "icims"
+    SMARTRECRUITERS = "smartrecruiters"
+    WORKABLE = "workable"
+    INDEED = "indeed"
+    ZIPRECRUITER = "ziprecruiter"
+    GLASSDOOR = "glassdoor"
+    WELLFOUND = "wellfound"
+    DICE = "dice"
 
 
 class JobSourceConfig(BaseModel):
@@ -43,9 +52,21 @@ class JobSourceConfig(BaseModel):
     @field_validator("provider")
     @classmethod
     def reject_browser_only_provider(cls, value: JobProvider) -> JobProvider:
-        """Keep LinkedIn discovery in the user-visible extension."""
-        if value is JobProvider.LINKEDIN:
-            raise ValueError("LinkedIn jobs must be captured through the Chrome extension")
+        """Keep providers without public board adapters in the user-visible extension."""
+        browser_only = {
+            JobProvider.LINKEDIN,
+            JobProvider.WORKDAY,
+            JobProvider.ICIMS,
+            JobProvider.SMARTRECRUITERS,
+            JobProvider.WORKABLE,
+            JobProvider.INDEED,
+            JobProvider.ZIPRECRUITER,
+            JobProvider.GLASSDOOR,
+            JobProvider.WELLFOUND,
+            JobProvider.DICE,
+        }
+        if value in browser_only:
+            raise ValueError(f"{value.value} jobs must be captured through the Chrome extension")
         return value
 
 
@@ -64,9 +85,6 @@ class TargetRole(str, Enum):
 
 DEFAULT_TARGET_ROLES: tuple[TargetRole, ...] = tuple(TargetRole)
 DEFAULT_PREFERRED_LOCATIONS: tuple[str, ...] = (
-    "Houston, TX",
-    "Austin, TX",
-    "Dallas, TX",
     "Remote - US",
 )
 
@@ -83,14 +101,12 @@ class SearchPreferences(BaseModel):
     allow_remote_us: bool = True
     allow_hybrid: bool = True
     allow_onsite: bool = True
-    willing_to_relocate: bool = False
+    willing_to_relocate: bool | None = None
     accepted_employment_types: list[Literal["internship", "full_time"]] = Field(
         default_factory=lambda: ["internship", "full_time"]
     )
     prioritize_internships: bool = True
-    excluded_title_terms: list[str] = Field(
-        default_factory=lambda: ["senior", "sr", "staff", "manager"]
-    )
+    excluded_title_terms: list[str] = Field(default_factory=list)
 
 
 class JobSearchQuery(BaseModel):
@@ -118,12 +134,18 @@ class JobPosting(BaseModel):
     workplace_type: Literal["remote", "hybrid", "onsite", "unknown"] = "unknown"
     source_url: str
     apply_url: str
+    workflow_key: str = ""
+    canonical_url: str = ""
+    description_source: str = ""
+    capture_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    warnings: list[str] = Field(default_factory=list)
     published_at: str | None = None
     retrieved_at: str = Field(default_factory=utc_now)
     industry: str | None = None
     target_role: TargetRole | None = None
     employment_track: Literal["internship", "full_time", "unknown"] = "unknown"
     search_score: float = Field(default=0.0, ge=0.0)
+    captured_for_profile_id: str | None = None
 
 
 class SourceSearchError(BaseModel):
@@ -161,6 +183,38 @@ class ApplicationStatus(str, Enum):
     BLOCKED = "blocked"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class ApplicationStage(str, Enum):
+    """Human-facing tracker buckets shown in the local web app."""
+
+    SAVED = "saved"
+    SELECTED = "selected"
+    TAILORING = "tailoring"
+    FORM_REVIEW = "form_review"
+    READY_TO_SUBMIT = "ready_to_submit"
+    SUBMITTED = "submitted"
+    INTERVIEW = "interview"
+    OFFER = "offer"
+    REJECTED = "rejected"
+    SKIPPED = "skipped"
+    BLOCKED = "blocked"
+
+
+class ApplicationArtifactType(str, Enum):
+    """Durable files generated or approved for an application."""
+
+    TAILORED_RESUME = "tailored_resume"
+    COVER_LETTER = "cover_letter"
+
+
+class ApplicationArtifactStatus(str, Enum):
+    """Review state for an application artifact."""
+
+    DRAFT = "draft"
+    GENERATED = "generated"
+    APPROVED = "approved"
+    UPLOADED = "uploaded"
 
 
 TERMINAL_APPLICATION_STATUSES: frozenset[ApplicationStatus] = frozenset(
@@ -213,22 +267,108 @@ class ApplicationRecord(BaseModel):
     """Persisted state for one job application."""
 
     application_id: str
+    profile_id: str = "default"
     job_id: str
     status: ApplicationStatus = ApplicationStatus.DISCOVERED
+    stage: ApplicationStage = ApplicationStage.SAVED
+    job_title: str = ""
+    company: str = ""
+    provider: JobProvider | None = None
+    location: str = ""
+    workplace_type: str = ""
+    salary_range: str = ""
+    apply_url: str = ""
+    source_url: str = ""
     resume_session_id: str | None = None
+    latest_resume_artifact_id: str | None = None
+    cover_letter_artifact_id: str | None = None
+    fit_score: float | None = None
+    current_resume_score: float | None = None
+    tailored_resume_score: float | None = None
+    required_missing: list[str] = Field(default_factory=list)
+    preferred_missing: list[str] = Field(default_factory=list)
+    keyword_misses: list[str] = Field(default_factory=list)
+    score_updated_at: str | None = None
+    missing_answers_count: int = Field(default=0, ge=0)
+    priority: Literal["low", "medium", "high"] = "medium"
+    excitement: int = Field(default=3, ge=1, le=5)
+    deadline: str | None = None
+    next_action_at: str | None = None
     notes: str = ""
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
+    last_activity_at: str = Field(default_factory=utc_now)
     approved_at: str | None = None
+    applied_at: str | None = None
     submitted_at: str | None = None
+
+
+class ApplicationArtifact(BaseModel):
+    """Persisted generated file or document linked to one application."""
+
+    artifact_id: str
+    application_id: str
+    job_id: str
+    profile_id: str = "default"
+    type: ApplicationArtifactType = ApplicationArtifactType.TAILORED_RESUME
+    status: ApplicationArtifactStatus = ApplicationArtifactStatus.GENERATED
+    filename: str = ""
+    mime_type: str = "application/pdf"
+    latex_source: str = ""
+    pdf_b64: str = ""
+    pdf_path: str = ""
+    pdf_size_bytes: int = 0
+    pdf_sha256: str = ""
+    diff: list[dict[str, Any]] = Field(default_factory=list)
+    confirmed_skills: list[str] = Field(default_factory=list)
+    ats_before: dict[str, Any] | None = None
+    ats_after: dict[str, Any] | None = None
+    warnings: list[str] = Field(default_factory=list)
+    page_count: int = 0
+    overflow: bool = False
+    visual_overflow: bool = False
+    min_text_baseline_pt: float | None = None
+    source_tailor_session_id: str | None = None
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+    approved_at: str | None = None
+    uploaded_at: str | None = None
+
+
+class ApplicationEvent(BaseModel):
+    """Timeline entry for application activity."""
+
+    event_id: str
+    application_id: str
+    kind: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=200)
+    detail: str = Field(default="", max_length=4000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now)
+
+
+class ApplicationTask(BaseModel):
+    """Manual follow-up or missing-answer task for one application."""
+
+    task_id: str
+    application_id: str
+    title: str = Field(min_length=1, max_length=240)
+    category: Literal["follow_up", "missing_answer", "interview", "manual", "deadline"] = "manual"
+    status: Literal["open", "done", "dismissed"] = "open"
+    due_at: str | None = None
+    notes: str = Field(default="", max_length=4000)
+    created_at: str = Field(default_factory=utc_now)
+    completed_at: str | None = None
 
 
 class WorkAuthorizationProfile(BaseModel):
     """Explicit authorization facts; unknown answers stay unknown."""
 
-    authorized_to_work_in_us: bool | None = True
-    requires_sponsorship: bool | None = False
-    internship_requires_sponsorship: bool | None = False
+    authorized_to_work_in_us: bool | None = None
+    requires_sponsorship: bool | None = None
+    current_requires_sponsorship: bool | None = None
+    future_requires_sponsorship: bool | None = None
+    internship_requires_sponsorship: bool | None = None
     full_time_requires_sponsorship: bool | None = None
 
     @model_validator(mode="before")
@@ -265,10 +405,51 @@ class WorkAuthorizationProfile(BaseModel):
         return self
 
 
+class CompanyRelationshipProfile(BaseModel):
+    """Explicit employment relationships for one hiring company or group."""
+
+    currently_employed: bool | None = None
+    employed_by_affiliate: bool | None = None
+    previously_employed: bool | None = None
+
+
+class CompensationPreference(BaseModel):
+    """Reusable compensation fact for one employment track."""
+
+    application_id: str | None = Field(default=None, max_length=128)
+    employment_type: Literal["any", "internship", "full_time"] = "any"
+    amount: str = Field(default="", max_length=64)
+    currency: str = Field(default="USD", min_length=3, max_length=8)
+    period: Literal["hourly", "monthly", "annual"] = "annual"
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def coerce_amount(cls, value: object) -> str:
+        return "" if value is None else str(value).strip()
+
+
+class ApplicationFactsProfile(BaseModel):
+    """Tri-state application facts that must never be guessed from a resume."""
+
+    is_at_least_18: bool | None = None
+    willing_to_relocate: bool | None = None
+    willing_to_travel: bool | None = None
+    active_non_compete_or_non_solicit: bool | None = None
+    company_relationships: dict[str, CompanyRelationshipProfile] = Field(
+        default_factory=dict
+    )
+    compensation_preferences: list[CompensationPreference] = Field(
+        default_factory=list
+    )
+
+
 class AddressProfile(BaseModel):
     """Postal address fields used only for application forms."""
 
+    line1: str = ""
+    line2: str = ""
     city: str = ""
+    county: str = ""
     state: str = ""
     postal_code: str = ""
     country: str = "United States"
@@ -279,7 +460,9 @@ class EducationProfile(BaseModel):
 
     school: str = ""
     degree: str = ""
+    degree_level: str = ""
     major: str = ""
+    field_of_study_candidates: list[str] = Field(default_factory=list)
     start_date: str = ""
     end_date: str = ""
     currently_studying: bool = False
@@ -300,6 +483,43 @@ class WorkExperienceProfile(BaseModel):
     currently_working: bool = False
     summary: str = ""
     bullets: list[str] = Field(default_factory=list)
+
+
+class ProjectSource(str, Enum):
+    """Where a reusable project record came from."""
+
+    RESUME = "resume"
+    GITHUB = "github"
+
+
+class ProjectRecord(BaseModel):
+    """Normalized project evidence available during resume tailoring."""
+
+    project_id: str
+    profile_id: str = "default"
+    source: ProjectSource = ProjectSource.RESUME
+    title: str
+    url: str = ""
+    description: str = ""
+    languages: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
+    readme_excerpt: str = ""
+    credibility_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    resume_entry_id: str | None = None
+    statement_ids: list[str] = Field(default_factory=list)
+    updated_at: str = Field(default_factory=utc_now)
+
+
+class ProjectRecommendation(BaseModel):
+    """JD-specific project ranking shown in Tailor Studio."""
+
+    project: ProjectRecord
+    fit_score: float = Field(default=0.0, ge=0.0, le=100.0)
+    matched_terms: list[str] = Field(default_factory=list)
+    summary_points: list[str] = Field(default_factory=list)
+    default_selected: bool = False
+    selectable: bool = True
+    rationale: str = ""
 
 
 class EqualOpportunityProfile(BaseModel):
@@ -348,6 +568,9 @@ class CandidateProfile(BaseModel):
     resume_latex_source: str = ""
     resume_pdf_filename: str = ""
     resume_pdf_b64: str = ""
+    resume_pdf_path: str = ""
+    resume_pdf_size_bytes: int = 0
+    resume_pdf_sha256: str = ""
     resume_updated_at: str = ""
     skills: list[str] = Field(default_factory=list)
     education: EducationProfile = Field(default_factory=EducationProfile)
@@ -360,8 +583,31 @@ class CandidateProfile(BaseModel):
         default_factory=EqualOpportunityProfile
     )
     search_preferences: SearchPreferences = Field(default_factory=SearchPreferences)
+    application_facts: ApplicationFactsProfile = Field(
+        default_factory=ApplicationFactsProfile
+    )
     custom_answers: dict[str, str] = Field(default_factory=dict)
     updated_at: str = Field(default_factory=utc_now)
+
+
+class QuestionIntent(str, Enum):
+    """Semantic purpose of an application question."""
+
+    AUTHORIZATION = "authorization"
+    CURRENT_SPONSORSHIP = "current_sponsorship"
+    FUTURE_SPONSORSHIP = "future_sponsorship"
+    SPONSORSHIP = "sponsorship"
+    AGE = "age"
+    COMPLETED_EDUCATION = "completed_education"
+    COMPENSATION = "compensation"
+    COMPANY_EMPLOYMENT = "company_employment"
+    AFFILIATE_EMPLOYMENT = "affiliate_employment"
+    RELOCATION = "relocation"
+    TRAVEL = "travel"
+    RESTRICTIVE_AGREEMENT = "restrictive_agreement"
+    RECORD_FIELD = "record_field"
+    NARRATIVE = "narrative"
+    UNKNOWN = "unknown"
 
 
 class FormQuestion(BaseModel):
@@ -375,6 +621,27 @@ class FormQuestion(BaseModel):
     sensitive: bool = False
     autocomplete: str | None = None
     current_value_present: bool = False
+    current_value: str | bool | list[str] | None = None
+    control_kind: Literal[
+        "scalar",
+        "custom_select",
+        "multi_select",
+        "month_year",
+        "year",
+    ] = "scalar"
+    max_length: int | None = Field(default=None, ge=1)
+    profile_record_kind: Literal["education", "work_experience"] | None = None
+    profile_record_index: int | None = Field(default=None, ge=0)
+    date_boundary: Literal["start", "end"] | None = None
+    date_component: Literal["month", "year"] | None = None
+
+
+class PlanOverride(BaseModel):
+    """Application-scoped reviewed value layered over a generated fill plan."""
+
+    value: str | bool | list[str]
+    answer_source: Literal["user_input", "generated"] = "user_input"
+    research_sources: list[str] = Field(default_factory=list, max_length=12)
 
 
 class FormScan(BaseModel):
@@ -385,8 +652,37 @@ class FormScan(BaseModel):
     provider: JobProvider
     page_url: str
     page_title: str = ""
+    step_key: str = ""
+    form_signature: str = ""
     questions: list[FormQuestion] = Field(default_factory=list, max_length=300)
+    plan_overrides: dict[str, PlanOverride] = Field(default_factory=dict)
     captured_at: str = Field(default_factory=utc_now)
+
+    @field_validator("plan_overrides", mode="before")
+    @classmethod
+    def load_legacy_plan_overrides(cls, value: object) -> object:
+        """Keep scans written before typed override metadata was introduced readable."""
+        if not isinstance(value, dict):
+            return value
+        return {
+            str(field_id): (
+                override
+                if isinstance(override, dict) and "value" in override
+                else {"value": override, "answer_source": "user_input"}
+            )
+            for field_id, override in value.items()
+        }
+
+
+class ApplicationDetail(BaseModel):
+    """Joined view for the application tracker and detail pages."""
+
+    application: ApplicationRecord
+    job: JobPosting | None = None
+    artifacts: list[ApplicationArtifact] = Field(default_factory=list)
+    events: list[ApplicationEvent] = Field(default_factory=list)
+    tasks: list[ApplicationTask] = Field(default_factory=list)
+    latest_form_scan: FormScan | None = None
 
 
 class BrowserJobCapture(BaseModel):
@@ -400,6 +696,11 @@ class BrowserJobCapture(BaseModel):
     location: str = ""
     source_url: str
     apply_url: str
+    workflow_key: str = ""
+    canonical_url: str = ""
+    description_source: str = ""
+    capture_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    warnings: list[str] = Field(default_factory=list)
     published_at: str | None = None
 
 
@@ -407,13 +708,14 @@ class FillAction(BaseModel):
     """A proposed form action that is reviewed before browser execution."""
 
     field_id: str
-    action: Literal["fill", "select", "check", "upload", "skip"]
-    value: str | bool | None = None
+    action: Literal["fill", "select", "select_many", "check", "upload", "skip"]
+    value: str | bool | list[str] | None = None
     answer_source: Literal[
         "profile",
         "custom_answer",
         "resume",
         "user_input",
+        "generated",
         "none",
         "eeo_opt_in",
     ]

@@ -51,19 +51,26 @@ Implemented:
 - Local JSONL analytics and optional LangSmith tracing
 - Reproducible benchmark CLI for synthetic resumes and public-job metadata
 - Public job search API with local SQLite job and application persistence
-- Chrome extension for LinkedIn, Greenhouse, and Lever job capture, form
-  scanning, and reviewed field filling
+- Chrome extension for 13 providers, including LinkedIn, Greenhouse, Lever,
+  Ashby, Workday, iCIMS, and SmartRecruiters, with job capture, resume upload,
+  form scanning, and reviewed field filling
 
 Current limitations:
 
-- Sessions are in memory and disappear when the API restarts.
+- Tailor sessions now persist in SQLite; classic `/latex/*` optimize sessions are
+  still in memory and disappear when the API restarts.
 - The Chrome extension fills reviewed known fields but never submits forms.
-- The API is intended for local development; it has no authentication or user
-  isolation and currently uses permissive CORS.
+- Authentication is optional and off by default (`APPLYTEX_REQUIRE_AUTH=0`). See
+  [`docs/AUTH.md`](docs/AUTH.md). Profile scoping via `X-Profile-Id` works without
+  passwords for local multi-profile use.
 - PDF rendering requires a local LaTeX engine for authoritative page checks.
 - Direct OpenAI and Gemini backends are placeholders; Codex SDK is supported
   separately through local Codex authentication.
 - Fit scores are not calibrated to any single commercial ATS vendor.
+
+See [`docs/JOBRIGHT_AND_ATS_AUDIT.md`](docs/JOBRIGHT_AND_ATS_AUDIT.md) for the
+Jobright comparison, provider workflow matrix, live-verification status, and
+cross-provider browser QA results.
 
 ## Quick Start
 
@@ -125,6 +132,7 @@ The `.env` file is ignored by Git.
 | `anthropic` | `ANTHROPIC_API_KEY` | Hosted reasoning and rewriting |
 | `ollama` | Local Ollama server | Private local experiments |
 | `codex` | Codex CLI/app sign-in | Codex SDK optimization route |
+| `openai` | `OPENAI_API_KEY` | Application-answer fallback with official web research |
 
 For Codex:
 
@@ -138,7 +146,16 @@ Sign in once, then configure:
 LLM_BACKEND=codex
 CODEX_MODEL=gpt-5.5
 CODEX_SANDBOX=read_only
+LLM_BACKEND_APPLICATION=codex
+CODEX_MODEL_APPLICATION=gpt-5.4-mini
 ```
+
+Open-ended application answers use a review-first draft flow. They are capped at
+100 words, grounded in the saved resume/profile and captured job description,
+and use official company sources. Application drafts use the faster Codex mini
+route and cache official research for repeated questions on the same captured
+job. Codex authentication is tried first; the OpenAI Responses API is used only
+when an API key is configured and Codex fails.
 
 Use `gpt-5.4-mini` for faster lightweight Codex tasks. See
 [Model routing](docs/MODEL_ROUTING.md) for the recommended local M4/16 GB route.

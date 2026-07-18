@@ -2,17 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BriefcaseBusiness, ClipboardCheck, FileText, FlaskConical, LayoutDashboard, Settings, UserRound } from "lucide-react";
+import { BriefcaseBusiness, ClipboardCheck, FileText, LayoutDashboard, Settings, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/profile-context";
 import { Button } from "@/components/ui/button";
 
 const nav = [
-  { href: "/", label: "Start", icon: LayoutDashboard },
+  { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
   { href: "/applications", label: "Applications", icon: ClipboardCheck },
-  { href: "/lab", label: "Lab", icon: FlaskConical, muted: true },
+  { href: "/lab", label: "Resume Studio", icon: FileText, muted: true },
   { href: "/settings", label: "Settings", icon: Settings, muted: true },
 ];
 

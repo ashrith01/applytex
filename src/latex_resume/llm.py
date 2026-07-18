@@ -23,8 +23,8 @@ Supports three wired backends, selected via the ``LLM_BACKEND`` env var
     app-server. This can use the same Codex authentication path as the Codex
     CLI/IDE/Web. Env vars: CODEX_MODEL, CODEX_SANDBOX.
 
-OpenAI and Gemini env placeholders may exist for future use, but the direct
-OpenAI API and Gemini backends are not implemented in ``complete_json`` yet.
+The direct OpenAI backend is available for application-answer fallback. Gemini
+remains a placeholder.
 
 Shared contract
 ---------------
@@ -108,6 +108,7 @@ LLM_BACKEND_PLAN: str = os.environ.get("LLM_BACKEND_PLAN", LLM_BACKEND).lower()
 LLM_BACKEND_DIFF: str = os.environ.get("LLM_BACKEND_DIFF", LLM_BACKEND).lower()
 LLM_BACKEND_REFINE: str = os.environ.get("LLM_BACKEND_REFINE", LLM_BACKEND).lower()
 LLM_BACKEND_REVIEW: str = os.environ.get("LLM_BACKEND_REVIEW", LLM_BACKEND).lower()
+LLM_BACKEND_APPLICATION: str = os.environ.get("LLM_BACKEND_APPLICATION", "codex").lower()
 
 # Groq settings
 GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "qwen/qwen3-32b")
@@ -117,9 +118,11 @@ ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 # OpenAI settings
 OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4o")
+OPENAI_MODEL_APPLICATION: str = os.environ.get("OPENAI_MODEL_APPLICATION", OPENAI_MODEL)
 
 # Codex SDK settings
 CODEX_MODEL: str = os.environ.get("CODEX_MODEL", "gpt-5.5")
+CODEX_MODEL_APPLICATION: str = os.environ.get("CODEX_MODEL_APPLICATION", "gpt-5.4-mini")
 CODEX_SANDBOX: str = os.environ.get("CODEX_SANDBOX", "read_only")
 
 # Gemini settings
@@ -175,6 +178,7 @@ def backend_for_task(
         "diff": LLM_BACKEND_DIFF,
         "refine": LLM_BACKEND_REFINE,
         "review": LLM_BACKEND_REVIEW,
+        "application": LLM_BACKEND_APPLICATION,
     }.get(task, LLM_BACKEND)
 
 
@@ -214,7 +218,9 @@ def codex_model_for_task(
     override_model: str | None = None,
 ) -> str:
     """Return the configured Codex model for an optimizer task."""
-    return override_model or CODEX_MODEL
+    if override_model:
+        return override_model
+    return CODEX_MODEL_APPLICATION if task == "application" else CODEX_MODEL
 
 
 def model_for_backend_task(
@@ -236,7 +242,7 @@ def model_for_backend_task(
     if normalized == "anthropic":
         return ANTHROPIC_MODEL
     if normalized == "openai":
-        return OPENAI_MODEL
+        return OPENAI_MODEL_APPLICATION if task == "application" else OPENAI_MODEL
     if normalized == "gemini":
         return GEMINI_MODEL
     return "?"
@@ -568,6 +574,7 @@ async def _complete_codex(
     retries: int,
     task: str | None = None,
     model_override: str | None = None,
+    web_search: bool = False,
 ) -> Any:
     """Call the official Codex SDK and parse the final response as JSON.
 
@@ -598,7 +605,11 @@ async def _complete_codex(
     for attempt in range(1 + retries):
         try:
             async with AsyncCodex() as codex:
-                thread = await codex.thread_start(model=model, sandbox=sandbox)
+                thread = await codex.thread_start(
+                    model=model,
+                    sandbox=sandbox,
+                    config={"web_search": "live" if web_search else "disabled"},
+                )
                 result = await thread.run(codex_prompt, sandbox=sandbox)
             raw = getattr(result, "final_response", "") or ""
             usage = getattr(result, "usage", None)
@@ -628,6 +639,59 @@ async def _complete_codex(
     ) from last_error
 
 
+async def _complete_openai(
+    prompt: str,
+    system: str,
+    retries: int,
+    task: str | None = None,
+    model_override: str | None = None,
+    web_search: bool = False,
+) -> Any:
+    """Call the OpenAI Responses API, optionally enabling its web-search tool."""
+    try:
+        from openai import AsyncOpenAI
+    except ImportError as exc:
+        raise EnvironmentError("The OpenAI Python package is not installed.") from exc
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise EnvironmentError("OPENAI_API_KEY is not configured.")
+    client = AsyncOpenAI(api_key=api_key)
+    model = model_override or (OPENAI_MODEL_APPLICATION if task == "application" else OPENAI_MODEL)
+    last_error: Exception | None = None
+    for attempt in range(1 + retries):
+        try:
+            request: dict[str, Any] = {
+                "model": model,
+                "instructions": system,
+                "input": prompt,
+            }
+            if web_search:
+                request["tools"] = [{"type": "web_search"}]
+            response = await client.responses.create(**request)
+            raw = response.output_text or ""
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                _record_usage(
+                    getattr(usage, "input_tokens", None),
+                    getattr(usage, "output_tokens", None),
+                )
+            if not raw.strip():
+                raise json.JSONDecodeError("Empty response from OpenAI", "", 0)
+            return _extract_json(raw)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            logger.warning(
+                "OpenAI JSON decode failed (attempt %d/%d): %s",
+                attempt + 1,
+                1 + retries,
+                exc,
+            )
+    raise ValueError(
+        f"OpenAI ({model}) did not return valid JSON after {1 + retries} attempt(s). "
+        f"Last error: {last_error}"
+    ) from last_error
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -641,6 +705,7 @@ async def complete_json(
     task: str | None = None,
     backend_override: str | None = None,
     model_override: str | None = None,
+    web_search: bool = False,
 ) -> Any:
     """Send *prompt* to the configured LLM backend and return parsed JSON.
 
@@ -676,9 +741,11 @@ async def complete_json(
     elif backend == "anthropic":
         return await _complete_anthropic(prompt, system, retries)
     elif backend == "codex":
-        return await _complete_codex(prompt, system, retries, task, model_override)
+        return await _complete_codex(prompt, system, retries, task, model_override, web_search)
+    elif backend == "openai":
+        return await _complete_openai(prompt, system, retries, task, model_override, web_search)
     else:
         raise ValueError(
             f"Unknown LLM_BACKEND={backend!r}. "
-            "Choose: groq | anthropic | ollama | codex"
+            "Choose: groq | anthropic | ollama | codex | openai"
         )

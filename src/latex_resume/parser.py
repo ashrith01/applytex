@@ -566,7 +566,13 @@ def _populate_entries(
         header_stop = begin_token if begin_token != -1 else content_start
         hs, he = _trim_span(tex, prev_end, header_stop)
         header_text = tex[hs:he]
-        entry = Entry(entry_id=f"{key}_{entry_idx}", header_text=header_text)
+        entry = Entry(
+            entry_id=f"{key}_{entry_idx}",
+            header_text=header_text,
+            tex_start=hs,
+            tex_end=block_end,
+            can_remove=True,
+        )
         for bullet_idx, (s, e, text) in enumerate(_parse_items(tex, content_start, content_end)):
             stmt_id = f"{key}_{entry_idx}_{bullet_idx}"
             entry.statements.append(

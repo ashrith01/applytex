@@ -118,6 +118,8 @@ prepareResumeButton.addEventListener("click", async () => {
       body: JSON.stringify({
         job_description: currentJob.description || "",
         customize: shouldCustomize,
+        application_id: currentApplicationId,
+        prefer_approved_artifact: true,
       }),
     });
     const upload = await executeInPage(uploadResumeFileToApplication, [prepared]);
@@ -232,6 +234,10 @@ async function executeInPage(func, args) {
   if (!activeTab?.id) {
     throw new Error("No active browser tab.");
   }
+  await chrome.scripting.executeScript({
+    target: { tabId: activeTab.id },
+    files: ["providers.js"],
+  });
   const [result] = await chrome.scripting.executeScript({
     target: { tabId: activeTab.id },
     func,
@@ -257,6 +263,8 @@ async function apiRequest(path, options = {}) {
 }
 
 function providerForUrl(url) {
+  const detected = globalThis.ApplyTexProviders?.providerForUrl?.(url);
+  if (detected) return detected;
   const hostname = new URL(url || "https://invalid.local").hostname;
   if (hostname === "www.linkedin.com" || hostname === "linkedin.com") {
     return "linkedin";
@@ -279,6 +287,22 @@ function canonicalPageKey(url) {
     return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, "");
   } catch {
     return url;
+  }
+}
+
+function workflowKeyForPopup(url, detectedProvider) {
+  try {
+    const parsed = new URL(url);
+    const externalId = parsed.searchParams.get("gh_jid") ||
+      parsed.searchParams.get("jid") ||
+      parsed.searchParams.get("jk") ||
+      parsed.pathname.split("/").filter(Boolean).pop() ||
+      "";
+    return externalId
+      ? `${detectedProvider}:${parsed.hostname}:${externalId.toLowerCase()}`
+      : `${detectedProvider}:${canonicalPageKey(url)}`;
+  } catch {
+    return `${detectedProvider}:${url}`;
   }
 }
 
@@ -396,12 +420,24 @@ async function extractJobFromPage(detectedProvider) {
   const firstText = (selectors) => {
     for (const selector of selectors) {
       const element = document.querySelector(selector);
-      const value = element?.getAttribute?.("content") || text(element);
+      const value =
+        element?.getAttribute?.("content") ||
+        element?.getAttribute?.("alt") ||
+        element?.getAttribute?.("aria-label") ||
+        text(element);
       if (value) return value;
     }
     return "";
   };
-  const cleanDescription = (value) => value.replace(/\n{3,}/g, "\n\n").trim();
+  const cleanDescription = (value, providerName = "") => {
+    let cleaned = String(value || "").replace(/\n{3,}/g, "\n\n").trim();
+    const stopMarkers = globalThis.ApplyTexProviders?.configFor?.(providerName)?.stopMarkers || [];
+    for (const marker of stopMarkers) {
+      const index = cleaned.toLowerCase().indexOf(marker.toLowerCase());
+      if (index > 0) cleaned = cleaned.slice(0, index).trim();
+    }
+    return cleaned;
+  };
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const tabWithText = (label) => {
     const wanted = label.toLowerCase();
@@ -412,60 +448,27 @@ async function extractJobFromPage(detectedProvider) {
     if (!element) return;
     element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
   };
-  const selectors = {
-    linkedin: {
-      title: [".job-details-jobs-unified-top-card__job-title", ".jobs-unified-top-card__job-title", "h1"],
-      company: [".job-details-jobs-unified-top-card__company-name", ".jobs-unified-top-card__company-name"],
-      location: [".job-details-jobs-unified-top-card__primary-description-container", ".jobs-unified-top-card__bullet"],
-      description: [".jobs-description__content", "#job-details"],
-    },
-    greenhouse: {
-      title: [".app-title", "h1"],
-      company: [".company-name", "[data-mapped='true'] .company"],
-      location: [".location", "[class*='location']"],
-      description: ["#content", ".job__description", "main"],
-    },
-    lever: {
-      title: [".posting-headline h2", "h1"],
-      company: [".main-header-logo img", "meta[property='og:site_name']"],
-      location: [".posting-categories .location", ".location"],
-      description: [".posting-page .content", ".posting-description", "main"],
-    },
-    ashby: {
-      title: ["h1", "[data-testid='job-title']", "[class*='job-title']"],
-      company: ["meta[property='og:site_name']", "[class*='company']", "header"],
-      location: ["[class*='location']", "[data-testid='location']"],
-      description: ["main", "[data-testid='job-description']", "[class*='description']"],
-    },
-  };
-  const applicationTab = detectedProvider === "ashby" ? tabWithText("Application") : null;
+  const providerConfig = globalThis.ApplyTexProviders?.configFor?.(detectedProvider) || {};
+  const applicationTab = providerConfig.afterCaptureTab ? tabWithText(providerConfig.afterCaptureTab) : null;
   const startedOnApplication =
     applicationTab?.getAttribute("aria-selected") === "true" ||
     applicationTab?.className?.toString().toLowerCase().includes("active");
-  if (detectedProvider === "ashby") {
-    const overviewTab = tabWithText("Overview");
-    if (overviewTab) {
-      activate(overviewTab);
+  if (providerConfig.beforeCaptureTab) {
+    const beforeTab = tabWithText(providerConfig.beforeCaptureTab);
+    if (beforeTab) {
+      activate(beforeTab);
       await wait(650);
     }
   }
-  const config = selectors[detectedProvider] || {};
+  const config = providerConfig.selectors || {};
   let company = firstText(config.company || []);
-  if (!company && detectedProvider === "lever") {
-    company =
-      document.querySelector(".main-header-logo img")?.alt ||
-      document.querySelector("meta[property='og:site_name']")?.content ||
-      "";
+  if (!company) {
+    company = companyFromPage(detectedProvider);
   }
-  if (!company && detectedProvider === "ashby") {
-    company =
-      document.querySelector("meta[property='og:site_name']")?.content ||
-      location.pathname.split("/").filter(Boolean)[0] ||
-      "";
-  }
-  const title = firstText(config.title || []);
-  const description = cleanDescription(firstText(config.description || []));
-  if (detectedProvider === "ashby" && startedOnApplication && applicationTab) {
+  const title = firstText(config.title || ["h1"]);
+  const description = cleanDescription(firstText(config.description || ["main", "body"]), detectedProvider);
+  const locationText = firstText(config.location || []);
+  if (startedOnApplication && applicationTab) {
     activate(applicationTab);
     await wait(250);
   }
@@ -479,10 +482,58 @@ async function extractJobFromPage(detectedProvider) {
     company: company || document.title.split("|").pop()?.trim() || "Unknown company",
     title,
     description,
-    location: firstText(config.location || []),
+    location: locationText,
     source_url: location.href,
     apply_url: location.href,
+    workflow_key: workflowKeyForPopup(location.href, detectedProvider),
+    canonical_url: canonicalPageKey(location.href),
+    description_source: config.description?.length ? "provider selector" : "page text",
+    capture_confidence: description.length > 500 ? 0.85 : 0.62,
+    warnings: description.length > 500 ? [] : ["Job description was shorter than expected."],
   };
+}
+
+function companyFromPage(detectedProvider) {
+  const title = document.title || "";
+  const fromApplicationTitle = title.match(/\bat\s+(.+?)(?:\s*$|\s+-\s+|\s+\|)/i)?.[1]?.trim();
+  if (fromApplicationTitle) return fromApplicationTitle;
+  const fromMeta =
+    document.querySelector("meta[property='og:site_name']")?.content?.trim() ||
+    document.querySelector("meta[name='application-name']")?.content?.trim();
+  const providerLabel = globalThis.ApplyTexProviders?.configFor?.(detectedProvider)?.label || detectedProvider;
+  if (fromMeta && !fromMeta.toLowerCase().includes(String(providerLabel || "").toLowerCase())) return fromMeta;
+  if (detectedProvider === "workday") {
+    const brandedCompany = workdayCompanyFromPage();
+    if (brandedCompany) return brandedCompany;
+  }
+  const parsed = new URL(location.href);
+  const boardToken = parsed.searchParams.get("for") || parsed.pathname.split("/").filter(Boolean)[0] || parsed.hostname.split(".")[0] || "";
+  return humanizeBoardToken(boardToken);
+}
+
+function workdayCompanyFromPage() {
+  const logoSource = document.querySelector("[data-automation-id='logo'][src]")?.getAttribute("src") || "";
+  try {
+    const logoPath = new URL(logoSource, location.href).pathname;
+    const assetToken = logoPath.match(/^\/([^/]+)\/assets\//i)?.[1] || "";
+    if (assetToken && !/^(assets?|images?|logos?|workday)$/i.test(assetToken)) {
+      return humanizeBoardToken(assetToken);
+    }
+  } catch {
+    // Continue to the board-name fallback.
+  }
+  const segments = location.pathname.split("/").filter(Boolean);
+  const localeIndex = segments.findIndex((segment) => /^[a-z]{2}-[a-z]{2}$/i.test(segment));
+  const boardToken = localeIndex >= 0 ? segments[localeIndex + 1] || "" : "";
+  return /^(careers?|external|jobs?)$/i.test(boardToken) ? "" : humanizeBoardToken(boardToken);
+}
+
+function humanizeBoardToken(value) {
+  return String(value || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim();
 }
 
 function scanApplicationForm(detectedProvider) {
@@ -515,6 +566,8 @@ function scanApplicationForm(detectedProvider) {
     const fieldset = element.closest("fieldset");
     const legend = fieldset?.querySelector("legend")?.textContent?.trim();
     if (legend) return legend;
+    const questionTitle = fieldset?.querySelector(".ashby-application-form-question-title")?.textContent?.trim();
+    if (questionTitle) return questionTitle;
     const group = element.closest("[role='radiogroup'], [aria-labelledby]");
     const labelledBy = group?.getAttribute("aria-labelledby");
     if (labelledBy) {
@@ -591,6 +644,19 @@ function scanApplicationForm(detectedProvider) {
           : Boolean(element.value),
       });
     });
+  fields.sort((left, right) => {
+    const leftElement = document.getElementById(left.field_id) ||
+      Array.from(document.querySelectorAll("input, select, textarea, [contenteditable='true']"))
+        .find((element) => element.name === left.field_id);
+    const rightElement = document.getElementById(right.field_id) ||
+      Array.from(document.querySelectorAll("input, select, textarea, [contenteditable='true']"))
+        .find((element) => element.name === right.field_id);
+    if (!leftElement || !rightElement || leftElement === rightElement) return 0;
+    const position = leftElement.compareDocumentPosition(rightElement);
+    if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
   return {
     provider: detectedProvider,
     page_url: location.href,
@@ -606,7 +672,7 @@ function cssEscape(value) {
   return value.replace(/['\\]/g, "\\$&");
 }
 
-function fillReviewedFields(actions) {
+async function fillReviewedFields(actions) {
   const findField = (fieldId) => {
     const byId = document.getElementById(fieldId);
     if (byId) return byId;
@@ -621,7 +687,7 @@ function fillReviewedFields(actions) {
           ? Array.from(candidate.labels).map((item) => item.textContent.trim()).join(" ")
           : candidate.value || "";
         const normalized = label.trim().toLowerCase();
-        return normalized === wanted || normalized.includes(wanted) || wanted.includes(normalized);
+        return normalized === wanted;
       }) || null;
   };
   const setNativeValue = (element, value) => {
@@ -642,6 +708,36 @@ function fillReviewedFields(actions) {
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
   };
+  const isPhoneField = (element) => {
+    if (!(element instanceof HTMLInputElement)) return false;
+    const autocomplete = String(element.getAttribute("autocomplete") || "").toLowerCase();
+    const label = [
+      ...(element.labels ? Array.from(element.labels).map((item) => item.textContent || "") : []),
+      element.getAttribute("aria-label") || "",
+    ].join(" ").toLowerCase();
+    return element.type === "tel" ||
+      autocomplete.split(/\s+/).some((token) => token.startsWith("tel")) ||
+      /\b(phone|mobile|telephone)\b/.test(label);
+  };
+  const fillPhoneField = async (element, value) => {
+    const digits = String(value).replace(/\D/g, "");
+    if (!digits) return false;
+    element.focus();
+    setNativeValue(element, "");
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+    for (const digit of digits) {
+      setNativeValue(element, `${element.value}${digit}`);
+      element.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: digit,
+        inputType: "insertText",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 8));
+    }
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.dispatchEvent(new Event("blur", { bubbles: true }));
+    return true;
+  };
   let filled = 0;
   let skipped = 0;
 
@@ -661,8 +757,7 @@ function fillReviewedFields(actions) {
         skipped += 1;
         continue;
       }
-      radio.checked = true;
-      dispatch(radio);
+      radio.click();
       filled += 1;
       continue;
     }
@@ -690,6 +785,14 @@ function fillReviewedFields(actions) {
     if (element.getAttribute("contenteditable") === "true") {
       element.textContent = String(action.value);
       dispatch(element);
+      filled += 1;
+      continue;
+    }
+    if (isPhoneField(element)) {
+      if (!(await fillPhoneField(element, action.value))) {
+        skipped += 1;
+        continue;
+      }
       filled += 1;
       continue;
     }

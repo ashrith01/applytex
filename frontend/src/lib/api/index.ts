@@ -2,14 +2,26 @@ import { apiFetch, apiUpload } from "./client";
 import type {
   ActiveProfileResponse,
   AnalyzeResponse,
+  ApplicationArtifact,
+  ApplicationArtifactStatus,
+  ApplicationDetail,
+  ApplicationEvent,
   ApplicationRecord,
+  ApplicationScoreResponse,
   ApplicationStatus,
+  ApplicationTask,
+  ApplicationsHealthResponse,
+  AuthLoginResponse,
+  AuthStatusResponse,
   CandidateProfile,
   HealthResponse,
   JobPosting,
   JobSearchResult,
   OptimizeResponse,
   ProfilePatch,
+  ProjectRankResponse,
+  ProjectRecord,
+  ProjectSyncResponse,
   ProfileResumeInfo,
   ProfileResumeUploadResponse,
   ProfileSetupResponse,
@@ -23,13 +35,34 @@ import type {
 export const api = {
   health: () => apiFetch<HealthResponse>("/health"),
 
+  getAuthStatus: (profileId?: string | null) =>
+    apiFetch<AuthStatusResponse>(
+      profileId
+        ? `/auth/status?profile_id=${encodeURIComponent(profileId)}`
+        : "/auth/status",
+    ),
+
+  login: (profileId: string, password: string, setPassword = false) =>
+    apiFetch<AuthLoginResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        profile_id: profileId,
+        password,
+        set_password: setPassword,
+      }),
+    }),
+
   setActiveProfile: (profileId: string) =>
     apiFetch<ActiveProfileResponse>("/profile/active", {
       method: "PUT",
       body: JSON.stringify({ profile_id: profileId }),
+      profileId,
     }),
 
-  getActiveProfile: () => apiFetch<ActiveProfileResponse>("/profile/active"),
+  getActiveProfile: (profileId?: string | null) =>
+    apiFetch<ActiveProfileResponse>("/profile/active", {
+      profileId: profileId ?? undefined,
+    }),
 
   getProfile: (profileId: string) =>
     apiFetch<CandidateProfile>(`/profile?profile_id=${encodeURIComponent(profileId)}`),
@@ -69,43 +102,176 @@ export const api = {
     );
   },
 
-  searchJobs: (payload: {
-    query: Record<string, unknown>;
-    sources: Record<string, unknown>[];
-    use_saved_preferences?: boolean;
-  }) =>
+  listProfileProjects: (profileId?: string | null) => {
+    const query = profileId ? `?profile_id=${encodeURIComponent(profileId)}` : "";
+    return apiFetch<ProjectRecord[]>(`/profile/projects${query}`);
+  },
+
+  syncGithubProjects: (profileId?: string | null) => {
+    const query = profileId ? `?profile_id=${encodeURIComponent(profileId)}` : "";
+    return apiFetch<ProjectSyncResponse>(`/profile/projects/sync/github${query}`, {
+      method: "POST",
+    });
+  },
+
+  searchJobs: (
+    payload: {
+      query: Record<string, unknown>;
+      sources: Record<string, unknown>[];
+      use_saved_preferences?: boolean;
+    },
+    profileId?: string | null,
+  ) =>
     apiFetch<JobSearchResult>("/jobs/search", {
       method: "POST",
       body: JSON.stringify(payload),
+      profileId: profileId ?? undefined,
     }),
 
-  listJobs: (limit = 50) => apiFetch<JobPosting[]>(`/jobs?limit=${limit}`),
+  listJobs: (limit = 50, profileId?: string | null) =>
+    apiFetch<JobPosting[]>(`/jobs?limit=${limit}`, {
+      profileId: profileId ?? undefined,
+    }),
 
   getJob: (jobId: string) => apiFetch<JobPosting>(`/jobs/${encodeURIComponent(jobId)}`),
 
-  listApplications: (limit = 50) =>
-    apiFetch<ApplicationRecord[]>(`/applications?limit=${limit}`),
+  listApplications: (limit = 50, profileId?: string | null) =>
+    apiFetch<ApplicationRecord[]>(`/applications?limit=${limit}`, {
+      profileId: profileId ?? undefined,
+    }),
+
+  getApplicationsHealth: (profileId?: string | null) =>
+    apiFetch<ApplicationsHealthResponse>("/applications/health", {
+      profileId: profileId ?? undefined,
+    }),
+
+  getApplication: (applicationId: string, profileId?: string | null) =>
+    apiFetch<ApplicationDetail>(`/applications/${encodeURIComponent(applicationId)}`, {
+      profileId: profileId ?? undefined,
+    }),
+
+  patchApplication: (
+    applicationId: string,
+    payload: Partial<
+      Pick<
+        ApplicationRecord,
+        | "stage"
+        | "priority"
+        | "excitement"
+        | "salary_range"
+        | "deadline"
+        | "next_action_at"
+        | "notes"
+        | "missing_answers_count"
+      >
+    >,
+    profileId?: string | null,
+  ) =>
+    apiFetch<ApplicationRecord>(`/applications/${encodeURIComponent(applicationId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+      profileId: profileId ?? undefined,
+    }),
 
   createApplication: (payload: {
     job_id: string;
+    profile_id?: string | null;
     resume_session_id?: string | null;
     notes?: string;
+    force_new?: boolean;
   }) =>
     apiFetch<ApplicationRecord>("/applications", {
       method: "POST",
       body: JSON.stringify(payload),
+      profileId: payload.profile_id ?? undefined,
     }),
+
+  scoreApplication: (applicationId: string, profileId?: string | null) =>
+    apiFetch<ApplicationScoreResponse>(
+      `/applications/${encodeURIComponent(applicationId)}/score`,
+      {
+        method: "POST",
+        body: JSON.stringify({ profile_id: profileId ?? null }),
+        profileId: profileId ?? undefined,
+      },
+    ),
 
   transitionApplication: (
     applicationId: string,
     status: ApplicationStatus,
     notes?: string,
+    profileId?: string | null,
   ) =>
     apiFetch<ApplicationRecord>(
       `/applications/${encodeURIComponent(applicationId)}/transition`,
       {
         method: "POST",
         body: JSON.stringify({ status, notes }),
+        profileId: profileId ?? undefined,
+      },
+    ),
+
+  createApplicationEvent: (
+    applicationId: string,
+    payload: {
+      kind: string;
+      label: string;
+      detail?: string;
+      payload?: Record<string, unknown>;
+    },
+    profileId?: string | null,
+  ) =>
+    apiFetch<ApplicationEvent>(
+      `/applications/${encodeURIComponent(applicationId)}/events`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        profileId: profileId ?? undefined,
+      },
+    ),
+
+  createApplicationTask: (
+    applicationId: string,
+    payload: {
+      title: string;
+      category?: ApplicationTask["category"];
+      due_at?: string | null;
+      notes?: string;
+    },
+    profileId?: string | null,
+  ) =>
+    apiFetch<ApplicationTask>(
+      `/applications/${encodeURIComponent(applicationId)}/tasks`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        profileId: profileId ?? undefined,
+      },
+    ),
+
+  getLatestApplicationArtifact: (
+    applicationId: string,
+    type = "tailored_resume",
+    status: ApplicationArtifactStatus = "approved",
+    profileId?: string | null,
+  ) =>
+    apiFetch<ApplicationArtifact>(
+      `/applications/${encodeURIComponent(applicationId)}/artifacts/latest?type=${encodeURIComponent(type)}&status=${encodeURIComponent(status)}`,
+      { profileId: profileId ?? undefined },
+    ),
+
+  updateApplicationArtifactStatus: (
+    applicationId: string,
+    artifactId: string,
+    status: ApplicationArtifactStatus,
+    profileId?: string | null,
+  ) =>
+    apiFetch<ApplicationArtifact>(
+      `/applications/${encodeURIComponent(applicationId)}/artifacts/${encodeURIComponent(artifactId)}/status`,
+      {
+        method: "POST",
+        body: JSON.stringify({ status }),
+        profileId: profileId ?? undefined,
       },
     ),
 
@@ -190,6 +356,23 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  rankTailorProjects: (sessionId: string) =>
+    apiFetch<ProjectRankResponse>(
+      `/tailor/sessions/${encodeURIComponent(sessionId)}/projects/rank`,
+      {
+        method: "POST",
+      },
+    ),
+
+  updateTailorProjects: (sessionId: string, selectedProjectIds: string[]) =>
+    apiFetch<ProjectRankResponse>(
+      `/tailor/sessions/${encodeURIComponent(sessionId)}/projects`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ selected_project_ids: selectedProjectIds }),
+      },
+    ),
+
   optimizeTailorSession: (
     sessionId: string,
     payload?: { allowed_stmt_ids?: string[]; optimization_strategy?: string },
@@ -211,6 +394,18 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify(payload),
+      },
+    ),
+
+  approveTailorSession: (
+    sessionId: string,
+    payload?: { application_id?: string | null; filename?: string | null },
+  ) =>
+    apiFetch<ApplicationArtifact>(
+      `/tailor/sessions/${encodeURIComponent(sessionId)}/approve`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
       },
     ),
 };
