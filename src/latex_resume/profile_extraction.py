@@ -229,11 +229,14 @@ def extract_education_profiles_from_text(text: str) -> list[EducationProfile]:
                 index += 1
         degree = degree_match.group("degree").strip()
         end_date = normalize_profile_date(end_date)
+        major = major_from_degree(degree)
         educations.append(
             EducationProfile(
                 school=school,
                 degree=degree,
-                major=major_from_degree(degree),
+                degree_level=degree_level_from_degree(degree),
+                major=major,
+                field_of_study_candidates=field_of_study_candidates(school, degree, major),
                 start_date=normalize_profile_date(start_date),
                 end_date=end_date,
                 currently_studying=end_date.casefold() == "present",
@@ -377,6 +380,54 @@ def major_from_degree(degree: str) -> str:
     return ""
 
 
+def degree_level_from_degree(degree: str) -> str:
+    """Return a conservative US application degree code without rewriting the resume."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", degree.casefold()).strip()
+    if re.search(r"\b(ph d|phd|doctor(?:ate|al)?)\b", normalized):
+        return "PhD"
+    if re.search(r"\b(mba|master of business administration)\b", normalized):
+        return "MBA"
+    if re.search(r"\b(m s|ms|master|masters)\b", normalized):
+        return "MS"
+    if re.search(r"\b(m a|ma)\b", normalized):
+        return "MA"
+    if re.search(r"\b(b tech|btech|b e|be|b s|bs|bachelor|bachelors)\b", normalized):
+        return "BS"
+    if re.search(r"\b(b a|ba)\b", normalized):
+        return "BA"
+    if re.search(r"\b(a s|as|associate of science)\b", normalized):
+        return "AS"
+    if re.search(r"\b(a a|aa|associate of arts)\b", normalized):
+        return "AA"
+    return ""
+
+
+def field_of_study_candidates(
+    school: str,
+    degree: str,
+    major: str,
+) -> list[str]:
+    """Build ordered, exact-only Workday search candidates from resume facts."""
+    school_key = school.casefold()
+    source = major or major_from_degree(degree)
+    source_key = source.casefold()
+    candidates: list[str] = []
+    if "university of houston" in school_key and "data science" in source_key:
+        candidates.extend(["Data Science", "Computer Engineering"])
+    elif "amrita" in school_key and "computer" in source_key:
+        candidates.extend(["Computer Science", "Computer Engineering"])
+    else:
+        if "data science" in source_key:
+            candidates.append("Data Science")
+        if "computer science" in source_key:
+            candidates.extend(["Computer Science", "Computer and Information Science"])
+        if "computer engineering" in source_key or "computer science and engineering" in source_key:
+            candidates.append("Computer Engineering")
+        if source and not candidates:
+            candidates.append(source)
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
 def job_type_from_role(role: str) -> str:
     if "intern" in role.casefold():
         return "Internship"
@@ -392,10 +443,13 @@ def education_profile_from_extracted_item(item: dict[str, object]) -> EducationP
     school, degree = _normalize_school_degree(raw_school, raw_degree)
     end_date = normalize_profile_date(str(item.get("end_date", "") or ""))
     grad_month, grad_year = _graduation_parts(end_date)
+    major = area or major_from_degree(degree)
     return EducationProfile(
         school=school,
         degree=degree,
-        major=area or major_from_degree(degree),
+        degree_level=degree_level_from_degree(degree),
+        major=major,
+        field_of_study_candidates=field_of_study_candidates(school, degree, major),
         start_date=normalize_profile_date(str(item.get("start_date", "") or "")),
         end_date=end_date,
         currently_studying=end_date.casefold() == "present",

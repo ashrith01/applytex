@@ -14,10 +14,20 @@ const REVIEW_STATUSES: ApplicationStatus[] = ["selected", "resume_ready", "form_
 
 export default function DashboardPage() {
   const { profileId, activeProfile } = useAuth();
-  const jobs = useQuery({ queryKey: ["jobs"], queryFn: () => api.listJobs(8) });
+  const jobs = useQuery({
+    queryKey: ["jobs", profileId],
+    queryFn: () => api.listJobs(8, profileId),
+    enabled: !!profileId,
+  });
   const applications = useQuery({
-    queryKey: ["applications"],
-    queryFn: () => api.listApplications(8),
+    queryKey: ["applications", profileId],
+    queryFn: () => api.listApplications(8, profileId),
+    enabled: !!profileId,
+  });
+  const health = useQuery({
+    queryKey: ["applications-health", profileId],
+    queryFn: () => api.getApplicationsHealth(profileId),
+    enabled: !!profileId,
   });
   const setup = useQuery({
     queryKey: ["profile-setup", profileId],
@@ -33,9 +43,18 @@ export default function DashboardPage() {
   const answersReady = Boolean(setup.data?.ready_for_basic_autofill);
   const currentJob = recentJobs[0];
   const next = nextAction({ resumeReady, answersReady, currentJob });
+  const needsAnswers = health.data?.missing_answers ?? recentApps.reduce((sum, app) => sum + app.missing_answers_count, 0);
 
   return (
     <div className="space-y-8">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <DashboardMetric label="Active applications" value={health.data?.active ?? activeApps.length} detail="Need resume or form review" />
+        <DashboardMetric label="Captured jobs" value={health.data?.captured_jobs ?? recentJobs.length} detail="Latest local job evidence" />
+        <DashboardMetric label="Avg current score" value={formatScore(health.data?.average_current_resume_score)} detail="Fast JD fit snapshot" />
+        <DashboardMetric label="Missing answers" value={needsAnswers} detail="Resolve before autofill" />
+        <DashboardMetric label="Duplicates cleaned" value={health.data?.duplicates_merged ?? 0} detail="Merged into canonical rows" />
+      </section>
+
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="relative overflow-hidden rounded-card border border-border bg-surface-card p-6 md:p-8">
           <div className="absolute inset-y-0 left-0 w-2 bg-primary" aria-hidden="true" />
@@ -138,6 +157,21 @@ export default function DashboardPage() {
   );
 }
 
+function DashboardMetric({ label, value, detail }: { label: string; value: number | string; detail: string }) {
+  return (
+    <Card className="relative overflow-hidden p-4 pl-5">
+      <div className="absolute inset-y-0 left-0 w-1 bg-primary" aria-hidden="true" />
+      <p className="font-mono text-xs uppercase tracking-[0.12em] text-ink-muted">{label}</p>
+      <p className="mt-2 text-3xl font-black text-ink">{value}</p>
+      <p className="mt-1 text-xs text-ink-muted">{detail}</p>
+    </Card>
+  );
+}
+
+function formatScore(score: number | null | undefined): string {
+  return score == null ? "-" : score.toFixed(1);
+}
+
 function nextAction({
   resumeReady,
   answersReady,
@@ -173,7 +207,8 @@ function ReadinessRow({ ready, title, detail }: { ready: boolean; title: string;
 
 function JobRow({ job }: { job: JobPosting }) {
   return (
-    <Card className="p-4">
+    <Card className="relative overflow-hidden p-4 pl-5">
+      <div className="absolute inset-y-0 left-0 w-1 bg-primary" aria-hidden="true" />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-ink-muted">
@@ -193,7 +228,8 @@ function JobRow({ job }: { job: JobPosting }) {
 
 function ApplicationRow({ app, job }: { app: ApplicationRecord; job?: JobPosting }) {
   return (
-    <Card className="p-4">
+    <Card className="relative overflow-hidden p-4 pl-5">
+      <div className="absolute inset-y-0 left-0 w-1 bg-accent" aria-hidden="true" />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-ink-muted">

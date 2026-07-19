@@ -14,6 +14,11 @@ def test_backend_override_wins_over_task_routing() -> None:
     assert backend_for_task("diff", override_backend="groq") == "groq"
 
 
+def test_application_answers_default_to_codex_routing() -> None:
+    assert backend_for_task("application") == "codex"
+    assert codex_model_for_task("application") == "gpt-5.4-mini"
+
+
 def test_ollama_model_override_wins_over_task_model() -> None:
     assert ollama_model_for_task("plan", override_model="qwen3:4b") == "qwen3:4b"
 

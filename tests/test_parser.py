@@ -57,6 +57,13 @@ def test_projects_ids(parsed: ParseResult) -> None:
     proj = _section(parsed, SectionType.PROJECTS)
     assert len(proj.entries) == 1
     assert [s.stmt_id for s in proj.entries[0].statements] == ["proj_0_0", "proj_0_1"]
+    entry = proj.entries[0]
+    assert entry.can_remove
+    assert entry.tex_start is not None
+    assert entry.tex_end is not None
+    entry_source = parsed.latex_source[entry.tex_start : entry.tex_end]
+    assert "ImageClassifier" in entry_source
+    assert "\\begin{itemize}" in entry_source
 
 
 def test_skills_lines(parsed: ParseResult) -> None:

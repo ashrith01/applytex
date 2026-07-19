@@ -97,6 +97,9 @@ class Entry(BaseModel):
     title: str | None = None
     company: str | None = None
     years: str | None = None
+    tex_start: int | None = None
+    tex_end: int | None = None
+    can_remove: bool = False
     statements: list[Statement] = Field(default_factory=list)
 
 

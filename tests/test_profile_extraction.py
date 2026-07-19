@@ -2,11 +2,28 @@ from pathlib import Path
 
 from latex_resume.job_models import CandidateProfile
 from latex_resume.profile_extraction import (
+    degree_level_from_degree,
     education_profile_from_extracted_item,
     extract_profile_facts_from_text,
     extract_profile_facts_from_tex,
+    field_of_study_candidates,
     profile_with_resume_prefill,
 )
+
+
+def test_application_education_metadata_keeps_resume_text_and_orders_fallbacks() -> None:
+    assert degree_level_from_degree("M.S. in Engineering Data Science & Artificial Intelligence") == "MS"
+    assert degree_level_from_degree("B.Tech in Computer Science & Engineering") == "BS"
+    assert field_of_study_candidates(
+        "University of Houston",
+        "M.S. in Engineering Data Science & Artificial Intelligence",
+        "Engineering Data Science & Artificial Intelligence",
+    ) == ["Data Science", "Computer Engineering"]
+    assert field_of_study_candidates(
+        "Amrita School of Engineering",
+        "B.Tech in Computer Science & Engineering (Artificial Intelligence)",
+        "Computer Science & Engineering (Artificial Intelligence)",
+    ) == ["Computer Science", "Computer Engineering"]
 
 
 PDF_TEXT = """

@@ -6,7 +6,8 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "webNavigation"
   ],
   "host_permissions": [
     "http://127.0.0.1:8000/*",
@@ -14,7 +15,18 @@
     "https://www.linkedin.com/*",
     "https://*.greenhouse.io/*",
     "https://*.lever.co/*",
-    "https://*.ashbyhq.com/*"
+    "https://*.ashbyhq.com/*",
+    "https://*.myworkdayjobs.com/*",
+    "https://*.myworkdaysite.com/*",
+    "https://*.icims.com/*",
+    "https://*.smartrecruiters.com/*",
+    "https://apply.workable.com/*",
+    "https://*.workable.com/*",
+    "https://www.indeed.com/*",
+    "https://www.ziprecruiter.com/*",
+    "https://www.glassdoor.com/*",
+    "https://wellfound.com/*",
+    "https://www.dice.com/*"
   ],
   "background": {
     "service_worker": "background.js"

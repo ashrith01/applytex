@@ -13,7 +13,39 @@ export type ApplicationStatus =
   | "failed"
   | "skipped";
 
-export type JobProvider = "linkedin" | "greenhouse" | "lever" | "ashby";
+export type ApplicationStage =
+  | "saved"
+  | "selected"
+  | "tailoring"
+  | "form_review"
+  | "ready_to_submit"
+  | "submitted"
+  | "interview"
+  | "offer"
+  | "rejected"
+  | "skipped"
+  | "blocked";
+
+export type ApplicationArtifactStatus = "draft" | "generated" | "approved" | "uploaded";
+
+export type ApplicationArtifactType = "tailored_resume" | "cover_letter";
+
+export type ProjectSource = "resume" | "github";
+
+export type JobProvider =
+  | "linkedin"
+  | "greenhouse"
+  | "lever"
+  | "ashby"
+  | "workday"
+  | "icims"
+  | "smartrecruiters"
+  | "workable"
+  | "indeed"
+  | "ziprecruiter"
+  | "glassdoor"
+  | "wellfound"
+  | "dice";
 
 export type TargetRole =
   | "ai_intern"
@@ -26,7 +58,10 @@ export type TargetRole =
   | "data_scientist";
 
 export interface AddressProfile {
+  line1: string;
+  line2: string;
   city: string;
+  county: string;
   state: string;
   postal_code: string;
   country: string;
@@ -35,7 +70,9 @@ export interface AddressProfile {
 export interface EducationProfile {
   school: string;
   degree: string;
+  degree_level: string;
   major: string;
+  field_of_study_candidates: string[];
   start_date: string;
   end_date: string;
   currently_studying: boolean;
@@ -59,8 +96,33 @@ export interface WorkExperienceProfile {
 export interface WorkAuthorizationProfile {
   authorized_to_work_in_us: boolean | null;
   requires_sponsorship: boolean | null;
+  current_requires_sponsorship: boolean | null;
+  future_requires_sponsorship: boolean | null;
   internship_requires_sponsorship?: boolean | null;
   full_time_requires_sponsorship?: boolean | null;
+}
+
+export interface CompanyRelationshipProfile {
+  currently_employed: boolean | null;
+  employed_by_affiliate: boolean | null;
+  previously_employed: boolean | null;
+}
+
+export interface CompensationPreference {
+  application_id: string | null;
+  employment_type: "any" | "internship" | "full_time";
+  amount: string;
+  currency: string;
+  period: "hourly" | "monthly" | "annual";
+}
+
+export interface ApplicationFactsProfile {
+  is_at_least_18: boolean | null;
+  willing_to_relocate: boolean | null;
+  willing_to_travel: boolean | null;
+  active_non_compete_or_non_solicit: boolean | null;
+  company_relationships: Record<string, CompanyRelationshipProfile>;
+  compensation_preferences: CompensationPreference[];
 }
 
 export interface EqualOpportunityProfile {
@@ -81,7 +143,7 @@ export interface SearchPreferences {
   allow_remote_us: boolean;
   allow_hybrid: boolean;
   allow_onsite: boolean;
-  willing_to_relocate: boolean;
+  willing_to_relocate: boolean | null;
   accepted_employment_types: ("internship" | "full_time")[];
   prioritize_internships: boolean;
   excluded_title_terms: string[];
@@ -111,6 +173,7 @@ export interface CandidateProfile {
   work_authorization: WorkAuthorizationProfile;
   equal_opportunity: EqualOpportunityProfile;
   search_preferences: SearchPreferences;
+  application_facts: ApplicationFactsProfile;
   custom_answers: Record<string, string>;
   updated_at: string;
 }
@@ -140,6 +203,20 @@ export interface ActiveProfileResponse {
   resume_filename: string;
   has_pdf: boolean;
   has_latex_source: boolean;
+}
+
+export interface AuthStatusResponse {
+  auth_required: boolean;
+  authenticated: boolean;
+  profile_id: string | null;
+  has_password: boolean;
+}
+
+export interface AuthLoginResponse {
+  access_token: string;
+  token_type: string;
+  profile_id: string;
+  auth_required: boolean;
 }
 
 export interface ProfileSetupQuestion {
@@ -182,6 +259,11 @@ export interface JobPosting {
   workplace_type: string;
   source_url: string;
   apply_url: string;
+  workflow_key: string;
+  canonical_url: string;
+  description_source: string;
+  capture_confidence: number | null;
+  warnings: string[];
   published_at: string | null;
   retrieved_at: string;
   industry: string | null;
@@ -223,19 +305,134 @@ export interface JobSearchResult {
 
 export interface ApplicationRecord {
   application_id: string;
+  profile_id: string;
   job_id: string;
   status: ApplicationStatus;
+  stage: ApplicationStage;
+  job_title: string;
+  company: string;
+  provider: JobProvider | null;
+  location: string;
+  workplace_type: string;
+  salary_range: string;
+  apply_url: string;
+  source_url: string;
   resume_session_id: string | null;
+  latest_resume_artifact_id: string | null;
+  cover_letter_artifact_id: string | null;
+  fit_score: number | null;
+  current_resume_score: number | null;
+  tailored_resume_score: number | null;
+  required_missing: string[];
+  preferred_missing: string[];
+  keyword_misses: string[];
+  score_updated_at: string | null;
+  missing_answers_count: number;
+  priority: "low" | "medium" | "high";
+  excitement: number;
+  deadline: string | null;
+  next_action_at: string | null;
   notes: string;
   created_at: string;
   updated_at: string;
+  last_activity_at: string;
   approved_at: string | null;
+  applied_at: string | null;
   submitted_at: string | null;
+}
+
+export interface ApplicationArtifact {
+  artifact_id: string;
+  application_id: string;
+  job_id: string;
+  profile_id: string;
+  type: ApplicationArtifactType;
+  status: ApplicationArtifactStatus;
+  filename: string;
+  mime_type: string;
+  latex_source: string;
+  pdf_b64: string;
+  diff: StatementDiff[];
+  confirmed_skills: string[];
+  ats_before: AtsSnapshot | null;
+  ats_after: AtsSnapshot | null;
+  warnings: string[];
+  page_count: number;
+  overflow: boolean;
+  visual_overflow: boolean;
+  min_text_baseline_pt: number | null;
+  source_tailor_session_id: string | null;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  uploaded_at: string | null;
+}
+
+export interface ApplicationEvent {
+  event_id: string;
+  application_id: string;
+  kind: string;
+  label: string;
+  detail: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ApplicationTask {
+  task_id: string;
+  application_id: string;
+  title: string;
+  category: "follow_up" | "missing_answer" | "interview" | "manual" | "deadline";
+  status: "open" | "done" | "dismissed";
+  due_at: string | null;
+  notes: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface FormQuestion {
+  field_id: string;
+  label: string;
+  input_type: string;
+  required: boolean;
+  options: string[];
+  sensitive: boolean;
+  autocomplete: string | null;
+  current_value_present: boolean;
+  current_value: string | boolean | string[] | null;
+  control_kind: string;
+  max_length: number | null;
+  profile_record_kind: "education" | "work_experience" | null;
+  profile_record_index: number | null;
+  date_boundary: "start" | "end" | null;
+  date_component: "month" | "year" | null;
+}
+
+export interface FormScan {
+  scan_id: string;
+  application_id: string | null;
+  provider: JobProvider;
+  page_url: string;
+  page_title: string;
+  questions: FormQuestion[];
+  captured_at: string;
+}
+
+export interface ApplicationDetail {
+  application: ApplicationRecord;
+  job: JobPosting | null;
+  artifacts: ApplicationArtifact[];
+  events: ApplicationEvent[];
+  tasks: ApplicationTask[];
+  latest_form_scan: FormScan | null;
 }
 
 export interface AtsSnapshot {
   score: number;
   raw_score?: number;
+  required_score?: number;
+  preferred_score?: number;
+  keyword_score?: number;
   required_found: string[];
   required_missing: string[];
   preferred_found: string[];
@@ -255,6 +452,58 @@ export interface AnalyzeResponse {
   skill_groups: Record<string, string[]>;
   editable_statement_count: number;
   latency_ms: Record<string, number>;
+}
+
+export interface ApplicationScoreResponse {
+  application: ApplicationRecord;
+  analysis: AnalyzeResponse;
+}
+
+export interface ProjectRecord {
+  project_id: string;
+  profile_id: string;
+  source: ProjectSource;
+  title: string;
+  url: string;
+  description: string;
+  languages: string[];
+  topics: string[];
+  readme_excerpt: string;
+  credibility_score: number | null;
+  resume_entry_id: string | null;
+  statement_ids: string[];
+  updated_at: string;
+}
+
+export interface ProjectRecommendation {
+  project: ProjectRecord;
+  fit_score: number;
+  matched_terms: string[];
+  summary_points: string[];
+  default_selected: boolean;
+  selectable: boolean;
+  rationale: string;
+}
+
+export interface ProjectRankResponse {
+  project_recommendations: ProjectRecommendation[];
+  selected_project_ids: string[];
+  project_filter_warnings: string[];
+}
+
+export interface ProjectSyncResponse {
+  projects: ProjectRecord[];
+  warnings: string[];
+}
+
+export interface ApplicationsHealthResponse {
+  total: number;
+  active: number;
+  duplicates_merged: number;
+  average_current_resume_score: number | null;
+  missing_answers: number;
+  captured_jobs: number;
+  profile_id: string;
 }
 
 export interface UploadResponse {
@@ -322,6 +571,9 @@ export interface TailorSessionResponse {
   match_preview: AnalyzeResponse;
   current_latex: string;
   confirmed_skills: string[];
+  project_recommendations: ProjectRecommendation[];
+  selected_project_ids: string[];
+  project_filter_warnings: string[];
   diff: StatementDiff[];
   change_history: StatementDiff[];
   last_result: Record<string, unknown> | null;

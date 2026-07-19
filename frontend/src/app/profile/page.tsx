@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { FileUp, Pencil } from "lucide-react";
+import { CheckCircle2, FileUp, Pencil, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth/profile-context";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,6 @@ import { roleLabel } from "@/lib/utils";
 import {
   ApplicationQuestionsEditor,
   ApplicationQuestionsView,
-  ensureEeoAutofillEnabled,
 } from "@/components/profile/application-questions";
 import type {
   EducationProfile,
@@ -24,12 +23,12 @@ import type {
 } from "@/lib/api/types";
 
 const sections = [
-  { id: "personal", label: "Personal" },
+  { id: "personal", label: "Personal & Links" },
   { id: "education", label: "Education" },
   { id: "work", label: "Work Experience" },
   { id: "skills", label: "Skills" },
-  { id: "questions", label: "Application Questions" },
-  { id: "preferences", label: "Preferences" },
+  { id: "questions", label: "Authorization, EEO & Answers" },
+  { id: "preferences", label: "Search Preferences" },
 ] as const;
 
 type SectionId = (typeof sections)[number]["id"];
@@ -68,11 +67,7 @@ export default function ProfilePage() {
   });
 
   const save = useMutation({
-    mutationFn: (body: ProfileView) => {
-      const payload =
-        editing === "questions" ? ensureEeoAutofillEnabled(body) : body;
-      return api.patchProfile(profileId!, profileViewToPatch(payload));
-    },
+    mutationFn: (body: ProfileView) => api.patchProfile(profileId!, profileViewToPatch(body)),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["profile", profileId] });
       await qc.invalidateQueries({ queryKey: ["profile-setup", profileId] });
@@ -107,6 +102,10 @@ export default function ProfilePage() {
 
   if (!p) return <p className="text-ink-muted">Loading profile…</p>;
 
+  const answeredQuestions = setup.data?.questions.filter((question) => question.value_present).length ?? 0;
+  const totalQuestions = setup.data?.questions.length ?? 0;
+  const completion = totalQuestions ? Math.round((answeredQuestions / totalQuestions) * 100) : 0;
+
   const sectionEditorProps = {
     editing,
     draft,
@@ -123,7 +122,7 @@ export default function ProfilePage() {
         <div>
           <h1 className="text-3xl font-extrabold">Profile</h1>
           <p className="mt-2 text-sm text-ink-muted">
-            Signed in as @{p.profile_id}. These details are reused while filling job applications.
+            Signed in as @{p.profile_id}. These facts power resume tailoring, reviewed autofill, and reusable ATS answers.
           </p>
         </div>
         <Link href="/profile/resume">
@@ -134,12 +133,41 @@ export default function ProfilePage() {
         </Link>
       </div>
 
+      <section className="grid gap-3 md:grid-cols-3">
+        <Card className="p-4">
+          <p className="font-mono text-xs uppercase tracking-[0.12em] text-ink-muted">autofill completion</p>
+          <p className="mt-1 text-3xl font-black">{completion}%</p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${completion}%` }} />
+          </div>
+        </Card>
+        <Card className="p-4">
+          <p className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.12em] text-ink-muted">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            answered
+          </p>
+          <p className="mt-1 text-3xl font-black">{answeredQuestions}/{totalQuestions || "—"}</p>
+        </Card>
+        <Card className="p-4">
+          <p className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.12em] text-ink-muted">
+            <ShieldAlert className="h-3.5 w-3.5" />
+            missing required
+          </p>
+          <p className="mt-1 text-3xl font-black">{setup.data?.missing_required.length ?? 0}</p>
+        </Card>
+      </section>
+
       {!setup.data?.ready_for_basic_autofill && (
         <Card className="border-amber-200 bg-amber-50/60">
           <CardTitle>Complete required fields</CardTitle>
           <CardDescription className="mt-2">
             Missing: {setup.data?.missing_required.join(", ") || "loading…"}
           </CardDescription>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(setup.data?.missing_required ?? []).slice(0, 8).map((item) => (
+              <Badge key={item} tone="warning">{item}</Badge>
+            ))}
+          </div>
         </Card>
       )}
 
@@ -166,7 +194,7 @@ export default function ProfilePage() {
 
       <Section
         id="personal"
-        title="Personal"
+        title="Personal & Links"
         section="personal"
         onEdit={() => openEditor("personal")}
         {...sectionEditorProps}
@@ -187,7 +215,10 @@ export default function ProfilePage() {
               ["LinkedIn", p.linkedin_url],
               ["GitHub", p.github_url],
               ["Portfolio", p.portfolio_url],
+              ["Address line 1", p.address.line1],
+              ["Address line 2", p.address.line2],
               ["City", p.address.city],
+              ["County", p.address.county],
               ["State", p.address.state],
               ["Postal code", p.address.postal_code],
               ["Country", p.address.country],
@@ -235,7 +266,7 @@ export default function ProfilePage() {
 
       <Section
         id="questions"
-        title="Job Application Questions"
+        title="Authorization, EEO & Reusable Answers"
         section="questions"
         onEdit={() => openEditor("questions")}
         {...sectionEditorProps}
@@ -524,7 +555,7 @@ function ProfileEditor({
             />
           </label>
         ))}
-        {(["city", "state", "postal_code", "country"] as const).map((key) => (
+        {(["line1", "line2", "city", "county", "state", "postal_code", "country"] as const).map((key) => (
           <label key={key} className="text-sm font-semibold capitalize">
             {key.replace(/_/g, " ")}
             <input
@@ -772,7 +803,9 @@ function emptyEducation(): EducationProfile {
   return {
     school: "",
     degree: "",
+    degree_level: "",
     major: "",
+    field_of_study_candidates: [],
     start_date: "",
     end_date: "",
     currently_studying: false,

@@ -366,6 +366,11 @@ def captured_job_to_posting(capture: BrowserJobCapture) -> JobPosting:
         ),
         source_url=capture.source_url,
         apply_url=capture.apply_url,
+        workflow_key=capture.workflow_key,
+        canonical_url=capture.canonical_url,
+        description_source=capture.description_source,
+        capture_confidence=capture.capture_confidence,
+        warnings=list(capture.warnings),
         published_at=capture.published_at,
     )
     return enrich_job(posting)

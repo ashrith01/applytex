@@ -13,9 +13,10 @@ export function StatementDiffList({ diffs }: StatementDiffListProps) {
   return (
     <div className="space-y-4">
       {diffs.map((change) => (
-        <Card key={change.stmt_id} className="overflow-hidden p-0">
+        <Card key={change.stmt_id} className="relative overflow-hidden p-0">
+          <div className="absolute inset-y-0 left-0 w-1 bg-accent" aria-hidden="true" />
           <div className="grid md:grid-cols-[144px_minmax(0,1fr)]">
-            <div className="border-b border-border bg-surface-source p-4 md:border-b-0 md:border-r">
+            <div className="border-b border-border bg-surface-source p-4 pl-5 md:border-b-0 md:border-r">
               <CardTitle className="font-mono text-sm">{change.stmt_id}</CardTitle>
               <CardDescription className="mt-2 font-mono text-xs">source span</CardDescription>
             </div>
