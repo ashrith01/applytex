@@ -131,6 +131,8 @@ from latex_resume.local_auth import (
 )
 from latex_resume.artifact_files import load_pdf_b64, persist_b64_pdf
 from latex_resume.tailor_store import TailorSession, tailor_store
+from latex_resume.job_models import AnswerProposal, SavedAnswer
+from latex_resume.form_resolution import is_question_proposal_eligible
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +301,7 @@ class FillReviewItem(BaseModel):
     failure_status: str | None = None
     question_intent: QuestionIntent = QuestionIntent.UNKNOWN
     draft_eligible: bool = False
+    proposal_eligible: bool = False
     resolution_reason: str = ""
 
 
@@ -318,6 +321,40 @@ class FillPlanOverrideRequest(BaseModel):
     answer_source: Literal["user_input", "generated"] = "user_input"
     research_sources: list[str] = Field(default_factory=list, max_length=12)
     profile_id: str | None = None
+    # When true, each override is also written back to the profile (typed
+    # eligibility facts) or the answers bank so the next form resolves it.
+    remember: bool = False
+
+
+class AnswerProposalRequest(BaseModel):
+    field_ids: list[str] = Field(default_factory=list, max_length=60)
+    profile_id: str | None = None
+
+
+class AnswerProposalResponse(BaseModel):
+    scan_id: str
+    proposals: list[AnswerProposal] = Field(default_factory=list)
+
+
+class AnswerUsageRequest(BaseModel):
+    field_ids: list[str] = Field(default_factory=list, max_length=300)
+    profile_id: str | None = None
+
+
+class AnswerUsageResponse(BaseModel):
+    recorded: int = 0
+
+
+class SavedAnswerUpsertRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=500)
+    value: str | bool | list[str]
+    intent: QuestionIntent = QuestionIntent.UNKNOWN
+    aliases: list[str] = Field(default_factory=list, max_length=32)
+    ats_provider: str = Field(default="", max_length=64)
+
+
+class SavedAnswerListResponse(BaseModel):
+    answers: list[SavedAnswer] = Field(default_factory=list)
 
 
 class ApplicationAnswerDraftRequest(BaseModel):
@@ -1421,6 +1458,7 @@ def _fill_resolution_reason(question: FormQuestion, action: FillAction) -> str:
         sources = {
             "profile": "Resolved from an explicit profile fact.",
             "custom_answer": "Resolved from a saved reusable answer.",
+            "saved_answer": "Resolved from an answer you remembered on an earlier form.",
             "user_input": "Resolved from an application-specific reviewed answer.",
             "generated": "Resolved from a reviewed generated answer.",
             "resume": "Resolved from the saved resume.",
@@ -1453,15 +1491,15 @@ def _build_fill_plan_for_scan(
             if job:
                 employment_track = job.employment_track
                 company = job.company
+    resolved_profile_id = profile_id or app.state.application_store.get_active_profile_id()
     resolved_actions = resolve_form_questions(
         scan.questions,
-        app.state.application_store.get_candidate_profile(
-            profile_id or app.state.application_store.get_active_profile_id()
-        ),
+        app.state.application_store.get_candidate_profile(resolved_profile_id),
         employment_track=employment_track,
         provider=scan.provider.value,
         company=company,
         application_id=scan.application_id or "",
+        saved_answers=app.state.application_store.list_profile_answers(resolved_profile_id),
     )
     actions = [
         FillAction(
@@ -1520,6 +1558,7 @@ def _build_fill_plan_for_scan(
             planned_value_preview=_preview_fill_value(action.value),
             question_intent=classify_question_intent(question),
             draft_eligible=is_question_draft_eligible(question),
+            proposal_eligible=question.required and is_question_proposal_eligible(question, action),
             resolution_reason=_fill_resolution_reason(question, action),
         )
         for question, action in zip(scan.questions, actions, strict=True)

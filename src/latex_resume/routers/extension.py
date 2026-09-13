@@ -10,6 +10,10 @@ from pathlib import Path
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from latex_resume.api import (
+    AnswerProposalRequest,
+    AnswerProposalResponse,
+    AnswerUsageRequest,
+    AnswerUsageResponse,
     ApplicationAnswerDraftRequest,
     FillPlanOverrideRequest,
     FillPlanResponse,
@@ -23,10 +27,15 @@ from latex_resume.api import (
     _profile_pdf_response,
     _render_profile_latex_to_pdf,
 )
+from latex_resume.answer_proposals import propose_short_answers
 from latex_resume.application_answers import ApplicationAnswerDraft, generate_application_answer
 from latex_resume.ats import check_ats
 from latex_resume.extractor import extract_full_resume
-from latex_resume.form_resolution import is_question_draft_eligible
+from latex_resume.form_resolution import (
+    is_question_draft_eligible,
+    is_question_proposal_eligible,
+    remember_answer,
+)
 from latex_resume.job_models import (
     ApplicationArtifact,
     ApplicationArtifactStatus,
@@ -350,12 +359,119 @@ async def override_fill_plan(
             }
         }
     )
-    request.app.state.application_store.save_form_scan(updated)
+    store = request.app.state.application_store
+    store.save_form_scan(updated)
+    if body.remember and cleaned:
+        _remember_overrides(store, scan, cleaned, scoped_profile_id, body.answer_source)
     return _build_fill_plan_for_scan(
         request.app,
         scan_id=scan_id,
         profile_id=scoped_profile_id,
     )
+
+
+def _remember_overrides(
+    store,
+    scan: FormScan,
+    overrides: dict[str, PlanOverride],
+    profile_id: str,
+    answer_source: str,
+) -> None:
+    """Write reviewed overrides back as profile facts or answers-bank rows."""
+    profile = store.get_candidate_profile(profile_id)
+    original = profile
+    by_id = {question.field_id: question for question in scan.questions}
+    source = "llm_reviewed" if answer_source == "generated" else "user"
+    for field_id, override in overrides.items():
+        question = by_id.get(field_id)
+        if question is None:
+            continue
+        profile, saved = remember_answer(
+            profile,
+            question,
+            override.value,
+            provider=scan.provider.value,
+            source=source,
+        )
+        if saved is not None:
+            store.upsert_profile_answer(saved)
+    if profile is not original:
+        store.save_candidate_profile(profile)
+
+
+@router.post("/extension/forms/{scan_id}/answers/propose", response_model=AnswerProposalResponse)
+async def propose_answers(
+    request: Request,
+    scan_id: str,
+    body: AnswerProposalRequest,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> AnswerProposalResponse:
+    """Suggest short answers from saved facts only; nothing is filled until confirmed."""
+    scoped_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=body.profile_id,
+    )
+    scan = require_form_scan_for_profile(request, scan_id, scoped_profile_id)
+    plan = _build_fill_plan_for_scan(request.app, scan_id=scan_id, profile_id=scoped_profile_id)
+    wanted = set(body.field_ids)
+    questions = [
+        question
+        for question, action in zip(scan.questions, plan.actions, strict=True)
+        if (not wanted or question.field_id in wanted)
+        and question.required
+        and is_question_proposal_eligible(question, action)
+    ]
+    if not questions:
+        return AnswerProposalResponse(scan_id=scan_id, proposals=[])
+    store = request.app.state.application_store
+    company = ""
+    job_title = ""
+    if scan.application_id:
+        application = store.get_application(scan.application_id)
+        if application:
+            company = application.company
+            job_title = application.job_title
+    try:
+        proposals = await propose_short_answers(
+            questions,
+            store.get_candidate_profile(scoped_profile_id),
+            store.list_profile_answers(scoped_profile_id),
+            provider=scan.provider.value,
+            company=company,
+            job_title=job_title,
+        )
+    except Exception as exc:
+        logger.exception("Answer proposal generation failed for scan %s", scan_id)
+        raise HTTPException(502, str(exc)) from exc
+    return AnswerProposalResponse(scan_id=scan_id, proposals=proposals)
+
+
+@router.post("/extension/forms/{scan_id}/answers/used", response_model=AnswerUsageResponse)
+async def record_answers_used(
+    request: Request,
+    scan_id: str,
+    body: AnswerUsageRequest,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> AnswerUsageResponse:
+    """Record that remembered answers were filled, so the bank shows real usage."""
+    scoped_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=body.profile_id,
+    )
+    require_form_scan_for_profile(request, scan_id, scoped_profile_id)
+    plan = _build_fill_plan_for_scan(request.app, scan_id=scan_id, profile_id=scoped_profile_id)
+    wanted = set(body.field_ids)
+    answer_ids = [
+        action.saved_answer_id
+        for action in plan.actions
+        if action.saved_answer_id and (not wanted or action.field_id in wanted)
+    ]
+    recorded = request.app.state.application_store.record_profile_answer_usage(
+        scoped_profile_id, answer_ids
+    )
+    return AnswerUsageResponse(recorded=recorded)
 
 
 @router.post(

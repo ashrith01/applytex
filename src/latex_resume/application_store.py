@@ -27,6 +27,7 @@ from latex_resume.job_models import (
     JobSearchResult,
     ProjectRecord,
     ProjectSource,
+    SavedAnswer,
     utc_now,
 )
 
@@ -242,6 +243,15 @@ class ApplicationStore:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS profile_answers (
+                    answer_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    normalized_prompt TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(profile_id, normalized_prompt)
                 );
                 """
             )
@@ -634,6 +644,105 @@ class ApplicationStore:
                 ),
             )
         return updated
+
+    # ------------------------------------------------------------------
+    # Answers bank
+    # ------------------------------------------------------------------
+
+    def list_profile_answers(self, profile_id: str) -> list[SavedAnswer]:
+        """Return remembered answers for one profile, most recently updated first."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM profile_answers
+                WHERE profile_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (profile_id,),
+            ).fetchall()
+        return [SavedAnswer.model_validate_json(row["payload_json"]) for row in rows]
+
+    def get_profile_answer(self, profile_id: str, answer_id: str) -> SavedAnswer | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM profile_answers WHERE profile_id = ? AND answer_id = ?",
+                (profile_id, answer_id),
+            ).fetchone()
+        return SavedAnswer.model_validate_json(row["payload_json"]) if row else None
+
+    def upsert_profile_answer(self, answer: SavedAnswer) -> SavedAnswer:
+        """Insert or replace by (profile, normalized prompt), keeping identity and usage."""
+        key = answer.normalized_prompt or answer.prompt_text.casefold().strip()
+        with self._lock, self._connect() as connection:
+            existing_row = connection.execute(
+                "SELECT payload_json FROM profile_answers WHERE profile_id = ? AND normalized_prompt = ?",
+                (answer.profile_id, key),
+            ).fetchone()
+            existing = SavedAnswer.model_validate_json(existing_row["payload_json"]) if existing_row else None
+            merged_aliases = list(dict.fromkeys([*(existing.aliases if existing else []), *answer.aliases]))
+            stored = answer.model_copy(
+                update={
+                    "answer_id": existing.answer_id if existing else answer.answer_id,
+                    "normalized_prompt": key,
+                    "aliases": merged_aliases[:32],
+                    "use_count": existing.use_count if existing else answer.use_count,
+                    "last_used_at": existing.last_used_at if existing else answer.last_used_at,
+                    "created_at": existing.created_at if existing else answer.created_at,
+                    "updated_at": utc_now(),
+                }
+            )
+            connection.execute(
+                """
+                INSERT INTO profile_answers
+                    (answer_id, profile_id, normalized_prompt, payload_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id, normalized_prompt) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    stored.answer_id,
+                    stored.profile_id,
+                    stored.normalized_prompt,
+                    stored.model_dump_json(),
+                    stored.updated_at,
+                ),
+            )
+        return stored
+
+    def delete_profile_answer(self, profile_id: str, answer_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM profile_answers WHERE profile_id = ? AND answer_id = ?",
+                (profile_id, answer_id),
+            )
+        return cursor.rowcount > 0
+
+    def record_profile_answer_usage(self, profile_id: str, answer_ids: list[str]) -> int:
+        """Bump ``use_count`` / ``last_used_at`` after a reviewed fill used the answers."""
+        if not answer_ids:
+            return 0
+        now = utc_now()
+        recorded = 0
+        with self._lock, self._connect() as connection:
+            for answer_id in dict.fromkeys(answer_ids):
+                row = connection.execute(
+                    "SELECT payload_json FROM profile_answers WHERE profile_id = ? AND answer_id = ?",
+                    (profile_id, answer_id),
+                ).fetchone()
+                if row is None:
+                    continue
+                answer = SavedAnswer.model_validate_json(row["payload_json"])
+                updated = answer.model_copy(
+                    update={"use_count": answer.use_count + 1, "last_used_at": now, "updated_at": now}
+                )
+                connection.execute(
+                    "UPDATE profile_answers SET payload_json = ?, updated_at = ? WHERE answer_id = ?",
+                    (updated.model_dump_json(), now, answer_id),
+                )
+                recorded += 1
+        return recorded
 
     def replace_profile_projects(
         self,

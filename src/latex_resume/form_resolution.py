@@ -6,6 +6,8 @@ import re
 from calendar import month_name
 from datetime import date
 
+import uuid
+
 from latex_resume.job_models import (
     CandidateProfile,
     CompanyRelationshipProfile,
@@ -13,7 +15,9 @@ from latex_resume.job_models import (
     FillAction,
     FormQuestion,
     QuestionIntent,
+    SavedAnswer,
     WorkExperienceProfile,
+    utc_now,
 )
 from latex_resume.profile_extraction import degree_level_from_degree, field_of_study_candidates
 from latex_resume.option_matching import match_available_option
@@ -148,6 +152,45 @@ COMMON_PROFILE_SETUP_QUESTIONS: tuple[dict[str, object], ...] = (
         "label": "Requires sponsorship",
         "category": "authorization",
         "required": True,
+    },
+    # Tri-state eligibility facts asked on nearly every Workday application.
+    # Listing them here makes the setup checklist request them explicitly so
+    # they stop appearing as "not in catalog" in QA reports.
+    {
+        "key": "application_facts.is_at_least_18",
+        "label": "At least 18 years of age",
+        "category": "eligibility",
+        "required": True,
+    },
+    {
+        "key": "application_facts.willing_to_relocate",
+        "label": "Willing to relocate if required",
+        "category": "eligibility",
+        "required": False,
+    },
+    {
+        "key": "application_facts.willing_to_travel",
+        "label": "Willing to travel if required",
+        "category": "eligibility",
+        "required": False,
+    },
+    {
+        "key": "application_facts.active_non_compete_or_non_solicit",
+        "label": "Bound by a non-compete or non-solicit",
+        "category": "eligibility",
+        "required": False,
+    },
+    {
+        "key": "application_facts.compensation_preferences",
+        "label": "Desired compensation (amount, currency, period)",
+        "category": "eligibility",
+        "required": False,
+    },
+    {
+        "key": "education.degree_level",
+        "label": "Highest completed education level",
+        "category": "education",
+        "required": False,
     },
     {
         "key": "custom_answers.Preferred name",
@@ -526,8 +569,13 @@ def resolve_form_questions(
     provider: str = "",
     company: str = "",
     application_id: str = "",
+    saved_answers: list[SavedAnswer] | None = None,
 ) -> list[FillAction]:
-    """Build a reviewable fill plan without guessing unknown or sensitive facts."""
+    """Build a reviewable fill plan without guessing unknown or sensitive facts.
+
+    Explicit profile facts win. A remembered ``SavedAnswer`` is used only where
+    the profile could not answer, so a later profile edit always takes effect.
+    """
     education_records = profile.educations or [profile.education]
     work_records = profile.work_experiences
     education_counts: dict[str, int] = {}
@@ -573,19 +621,213 @@ def resolve_form_questions(
             work_counts[work_counter_key] = work_index + 1
         education = education_records[education_index] if education_index < len(education_records) else profile.education
         work = work_records[work_index] if work_index < len(work_records) else None
-        actions.append(
-            _resolve_question(
-                question,
-                profile,
-                employment_track=employment_track,
-                provider=provider,
-                company=company,
-                application_id=application_id,
-                education=education,
-                work=work,
-            )
+        action = _resolve_question(
+            question,
+            profile,
+            employment_track=employment_track,
+            provider=provider,
+            company=company,
+            application_id=application_id,
+            education=education,
+            work=work,
         )
+        if action.action == "skip" and saved_answers:
+            remembered = _saved_answer_action(question, saved_answers)
+            if remembered is not None:
+                action = remembered
+        actions.append(action)
     return [validate_action_options(question, action) for question, action in zip(questions, actions, strict=True)]
+
+
+# Intents whose remembered boolean answer belongs on the profile, not in the
+# answers bank, so every later form and the profile UI see the same fact.
+_INTENT_PROFILE_FACTS: dict[QuestionIntent, tuple[str, str]] = {
+    QuestionIntent.AGE: ("application_facts", "is_at_least_18"),
+    QuestionIntent.RELOCATION: ("application_facts", "willing_to_relocate"),
+    QuestionIntent.TRAVEL: ("application_facts", "willing_to_travel"),
+    QuestionIntent.RESTRICTIVE_AGREEMENT: ("application_facts", "active_non_compete_or_non_solicit"),
+    QuestionIntent.AUTHORIZATION: ("work_authorization", "authorized_to_work_in_us"),
+    QuestionIntent.CURRENT_SPONSORSHIP: ("work_authorization", "current_requires_sponsorship"),
+    QuestionIntent.FUTURE_SPONSORSHIP: ("work_authorization", "future_requires_sponsorship"),
+    QuestionIntent.SPONSORSHIP: ("work_authorization", "requires_sponsorship"),
+}
+
+# Intents that must never be answered by a language model, even with review:
+# they are either explicit legal facts the profile already stores, or money.
+_PROPOSAL_EXCLUDED_INTENTS: frozenset[QuestionIntent] = frozenset(
+    {
+        QuestionIntent.AUTHORIZATION,
+        QuestionIntent.CURRENT_SPONSORSHIP,
+        QuestionIntent.FUTURE_SPONSORSHIP,
+        QuestionIntent.SPONSORSHIP,
+        QuestionIntent.COMPENSATION,
+        QuestionIntent.RECORD_FIELD,
+        QuestionIntent.NARRATIVE,
+    }
+)
+
+
+def normalize_answer_prompt(label: str) -> str:
+    """Canonical key for matching a saved answer against a scanned label."""
+    return _normalize(_clean_required_marker(label))
+
+
+def boolean_from_answer_value(value: str | bool | list[str] | None) -> bool | None:
+    """Interpret a reviewed answer as yes/no when it clearly is one."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, list):
+        return boolean_from_answer_value(value[0]) if len(value) == 1 else None
+    if value is None:
+        return None
+    normalized = _normalize(str(value))
+    # "yes", "Yes, I am", "yes - authorized" all mean yes; "none" / "not sure" do not mean no.
+    if normalized in {"yes", "true", "y"} or re.match(r"^(?:yes|true)\b", normalized):
+        return True
+    if normalized in {"no", "false", "n"} or re.match(r"^(?:no|false)\b", normalized):
+        return False
+    return None
+
+
+def is_question_proposal_eligible(question: FormQuestion, action: FillAction | None = None) -> bool:
+    """Whether a short reviewed suggestion may be requested for this question."""
+    if action is not None and action.action != "skip":
+        return False
+    if question.sensitive or question.input_type == "file" or question.profile_record_kind:
+        return False
+    if question.current_value_present:
+        return False
+    label = _normalize(question.label)
+    if any(pattern in label for pattern in _SENSITIVE_PATTERNS):
+        return False
+    return classify_question_intent(question) not in _PROPOSAL_EXCLUDED_INTENTS
+
+
+def remember_answer(
+    profile: CandidateProfile,
+    question: FormQuestion,
+    value: str | bool | list[str],
+    *,
+    provider: str = "",
+    source: str = "user",
+) -> tuple[CandidateProfile, SavedAnswer | None]:
+    """Persist a reviewed answer so the next form resolves it deterministically.
+
+    Returns the (possibly updated) profile and a ``SavedAnswer`` to upsert, or
+    ``None`` when the answer became a profile fact or must not be remembered
+    (sensitive/EEO questions, files, per-record fields).
+    """
+    label = _normalize(question.label)
+    if (
+        question.sensitive
+        or question.input_type == "file"
+        or question.profile_record_kind
+        or any(pattern in label for pattern in _SENSITIVE_PATTERNS)
+    ):
+        return profile, None
+
+    intent = classify_question_intent(question)
+    fact = _INTENT_PROFILE_FACTS.get(intent)
+    if fact is not None:
+        boolean = boolean_from_answer_value(value)
+        if boolean is not None:
+            group_name, field_name = fact
+            group = getattr(profile, group_name)
+            updated_group = group.model_copy(update={field_name: boolean})
+            return profile.model_copy(update={group_name: updated_group}), None
+
+    prompt_text = _clean_required_marker(question.label).strip() or question.label
+    if not prompt_text:
+        return profile, None
+    saved_source = source if source in {"user", "resolved", "llm_reviewed"} else "user"
+    return profile, SavedAnswer(
+        answer_id=str(uuid.uuid4()),
+        profile_id=profile.profile_id,
+        intent=intent,
+        prompt_text=prompt_text[:500],
+        normalized_prompt=normalize_answer_prompt(question.label),
+        value=value,
+        source=saved_source,  # type: ignore[arg-type]
+        ats_provider=provider,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+
+def _saved_answer_action(
+    question: FormQuestion,
+    saved_answers: list[SavedAnswer],
+) -> FillAction | None:
+    """Resolve from the answers bank: exact prompt, then alias, then token match."""
+    if question.input_type == "file" or question.profile_record_kind:
+        return None
+    normalized_label = normalize_answer_prompt(question.label)
+    if not normalized_label:
+        return None
+    intent = classify_question_intent(question)
+    if intent == QuestionIntent.UNKNOWN and any(
+        pattern in normalized_label for pattern in _SENSITIVE_PATTERNS
+    ):
+        return None
+
+    exact: SavedAnswer | None = None
+    by_intent: SavedAnswer | None = None
+    fuzzy: SavedAnswer | None = None
+    for answer in saved_answers:
+        keys = [answer.normalized_prompt or normalize_answer_prompt(answer.prompt_text)]
+        keys.extend(_normalize(alias) for alias in answer.aliases)
+        keys = [key for key in keys if key]
+        if any(key == normalized_label for key in keys):
+            exact = answer
+            break
+        if (
+            by_intent is None
+            and intent not in {QuestionIntent.UNKNOWN, QuestionIntent.NARRATIVE, QuestionIntent.RECORD_FIELD}
+            and answer.intent == intent
+        ):
+            by_intent = answer
+        if fuzzy is None and any(_custom_prompt_matches_label(key, normalized_label) for key in keys):
+            fuzzy = answer
+    chosen = exact or by_intent or fuzzy
+    if chosen is None:
+        return None
+    return _saved_answer_fill_action(question, chosen)
+
+
+def _saved_answer_fill_action(question: FormQuestion, answer: SavedAnswer) -> FillAction:
+    value = answer.value
+    if question.input_type == "checkbox":
+        boolean = boolean_from_answer_value(value)
+        if boolean is not None:
+            return FillAction(
+                field_id=question.field_id,
+                action="check",
+                value=boolean,
+                answer_source="saved_answer",
+                saved_answer_id=answer.answer_id,
+            )
+    if question.control_kind == "multi_select":
+        values = value if isinstance(value, list) else [
+            part.strip() for part in re.split(r"[,;\n]+", str(value)) if part.strip()
+        ]
+        return FillAction(
+            field_id=question.field_id,
+            action="select_many",
+            value=[_match_option(item, question.options) for item in values],
+            answer_source="saved_answer",
+            saved_answer_id=answer.answer_id,
+        )
+    if isinstance(value, bool) and question.input_type in {"select", "radio"}:
+        action = _boolean_action(question, value)
+        return action.model_copy(update={"answer_source": "saved_answer", "saved_answer_id": answer.answer_id})
+    text = value if isinstance(value, str) else ", ".join(value) if isinstance(value, list) else ("Yes" if value else "No")
+    return FillAction(
+        field_id=question.field_id,
+        action="select" if question.input_type in {"select", "radio"} else "fill",
+        value=_match_option(text, question.options),
+        answer_source="saved_answer",
+        saved_answer_id=answer.answer_id,
+    )
 
 
 def _resolve_question(

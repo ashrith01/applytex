@@ -610,6 +610,43 @@ class QuestionIntent(str, Enum):
     UNKNOWN = "unknown"
 
 
+class SavedAnswer(BaseModel):
+    """A reusable answer the user confirmed once and asked to remember.
+
+    Unlike ``CandidateProfile.custom_answers`` (a flat prompt -> text map), a
+    saved answer carries the question intent, learned prompt aliases, where it
+    came from, and usage so the fill plan can resolve the same question on the
+    next form deterministically.
+    """
+
+    answer_id: str
+    profile_id: str = "default"
+    intent: QuestionIntent = QuestionIntent.UNKNOWN
+    prompt_text: str = Field(min_length=1, max_length=500)
+    normalized_prompt: str = ""
+    value: str | bool | list[str]
+    aliases: list[str] = Field(default_factory=list, max_length=32)
+    source: Literal["user", "resolved", "llm_reviewed"] = "user"
+    ats_provider: str = ""
+    use_count: int = Field(default=0, ge=0)
+    last_used_at: str | None = None
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+
+
+class AnswerProposal(BaseModel):
+    """A short-answer suggestion grounded in saved facts; never applied without review."""
+
+    field_id: str
+    label: str
+    value: str | bool | list[str] | None = None
+    intent: QuestionIntent = QuestionIntent.UNKNOWN
+    confidence: Literal["high", "medium", "low"] = "low"
+    evidence: str = ""
+    reason: str = ""
+    remember_target: Literal["profile_fact", "saved_answer", "none"] = "none"
+
+
 class FormQuestion(BaseModel):
     """Normalized application form field discovered in the browser."""
 
@@ -714,6 +751,7 @@ class FillAction(BaseModel):
     answer_source: Literal[
         "profile",
         "custom_answer",
+        "saved_answer",
         "resume",
         "user_input",
         "generated",
@@ -722,3 +760,4 @@ class FillAction(BaseModel):
     ]
     requires_review: bool = True
     resolution_reason: str = ""
+    saved_answer_id: str | None = None
