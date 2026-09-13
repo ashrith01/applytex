@@ -63,6 +63,7 @@ async function injectPanel(tabId) {
       "panel-scan.js",
       "panel-fill.js",
       "panel-workday.js",
+      "panel-profile.js",
       "panel.js",
     ],
   }).catch(() => {});

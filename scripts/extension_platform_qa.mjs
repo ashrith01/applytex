@@ -41,6 +41,7 @@ const playwright = await loadPlaywright();
 const report = await runQa();
 writeReport(report, outputPath);
 console.log(renderConsoleSummary(report, outputPath));
+if (report.failures.length) process.exitCode = 1;
 
 async function runQa() {
   if (verbose) console.log("QA: launching browser");
@@ -184,6 +185,7 @@ async function runQa() {
           "panel-scan.js",
           "panel-fill.js",
           "panel-workday.js",
+          "panel-profile.js",
         ]) {
           if (verbose) console.log(`${provider} fixture ${index}: injecting ${moduleName}`);
           await page.addScriptTag({ path: path.join(EXTENSION_DIR, moduleName) });
@@ -206,6 +208,27 @@ async function runQa() {
           }, { timeout: 10000 });
         }
 
+        if (!qaState.profileWorkspace) {
+          qaState.profileWorkspace = await exerciseProfileWorkspace(page, qaState);
+        }
+
+        if (provider === "greenhouse" && index === 1) {
+          const coverQuestion = qaState.scansByUrl.get(url)?.at(-1)?.questions.find((question) => question.field_id === "supporting_file");
+          if (coverQuestion?.label !== "Cover Letter*" || !coverQuestion.required) {
+            throw new Error("Hidden required cover-letter upload was not identified from its group label.");
+          }
+          const attach = page.locator("#smartjobapply-panel [data-action='attach-document'][data-field-id='supporting_file']");
+          const chooserPromise = page.waitForEvent("filechooser");
+          await attach.click();
+          const chooser = await chooserPromise;
+          await chooser.setFiles({ name: "qa-cover-letter.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\nQA cover letter\n%%EOF") });
+          await page.waitForFunction(() => !document.querySelector("#smartjobapply-panel [data-action='attach-document'][data-field-id='supporting_file']"));
+          if (await page.locator("#resume").evaluate((input) => input.files.length) !== 0) {
+            throw new Error("Cover letter was attached to the resume control.");
+          }
+          record.cover_letter_uploaded = true;
+        }
+
         if (provider === "workday") {
           for (const kind of ["education", "work_experience"]) {
             const selector = `#smartjobapply-panel [data-record-kind='${kind}']`;
@@ -220,10 +243,15 @@ async function runQa() {
         }
 
         if (verbose) console.log(`${provider} fixture ${index}: uploading fixture resume`);
-        if (!await page.locator("#smartjobapply-panel [data-action='default-resume']").count()) {
-          await page.locator("#smartjobapply-panel [data-tab='tailor']").first().click({ timeout: 3000 });
+        if (!await page.locator("#smartjobapply-panel [data-action='use-profile-resume']").count()) {
+          await page.locator("#smartjobapply-panel [data-action='open-resume-workspace']").first().click({ timeout: 3000 });
         }
-        await page.locator("#smartjobapply-panel [data-action='default-resume']").click({ timeout: 3000 });
+        if (args["profile-screenshot-dir"] && provider === providers[0] && index === 1) {
+          await page.locator("#smartjobapply-panel").screenshot({
+            path: path.resolve(args["profile-screenshot-dir"], "resume-chooser-390.png"),
+          });
+        }
+        await page.locator("#smartjobapply-panel [data-action='use-profile-resume']").click({ timeout: 3000 });
         await page.waitForFunction(() => {
           const panel = document.querySelector("#smartjobapply-panel");
           return panel?.textContent?.includes("Uploaded qa-resume.pdf.");
@@ -693,15 +721,137 @@ function createQaState() {
     scans: new Map(),
     scansByUrl: new Map(),
     plansByUrl: new Map(),
+    profile: qaProfileFixture(),
+    profileWorkspace: null,
+    lastProfilePatch: null,
+    profilePatches: [],
     consoleMessages: [],
     pageErrors: [],
   };
 }
 
+async function exerciseProfileWorkspace(page, qaState) {
+  await page.locator("#smartjobapply-panel .sja-account-menu summary").click({ timeout: 3000 });
+  await page.locator("#smartjobapply-panel [data-action='open-autofill-information']").first().click({ timeout: 3000 });
+  await page.waitForSelector("#smartjobapply-panel [data-profile-workspace]", { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.hasAttribute("data-profile-path"), null, { timeout: 3000 });
+  const initialFocusPath = await page.evaluate(() => document.activeElement?.getAttribute("data-profile-path") || "");
+
+  const profileScreenshotDir = args["profile-screenshot-dir"];
+  if (profileScreenshotDir) {
+    fs.mkdirSync(path.resolve(profileScreenshotDir), { recursive: true });
+    await page.setViewportSize({ width: 390, height: 768 });
+    await page.screenshot({ path: path.resolve(profileScreenshotDir, "profile-personal-390.png"), fullPage: false });
+  }
+
+  const addressLine2 = page.locator("#smartjobapply-panel [data-profile-path='address.line2']");
+  await addressLine2.fill("Suite 200");
+  await page.locator("#smartjobapply-panel [data-action='profile-save']").click({ timeout: 3000 });
+  await page.waitForFunction(() => {
+    const panel = document.querySelector("#smartjobapply-panel");
+    return panel?.textContent?.includes("Saved to your profile.")
+      && !panel?.textContent?.includes("Saving...");
+  }, null, { timeout: 10000 });
+
+  await page.locator("#smartjobapply-panel [data-profile-section='education']").click({ timeout: 3000 });
+  const educationCount = await page.locator("#smartjobapply-panel .sja-profile-record").count();
+  if (profileScreenshotDir) {
+    await page.setViewportSize({ width: 372, height: 768 });
+    await page.screenshot({ path: path.resolve(profileScreenshotDir, "profile-education-372.png"), fullPage: false });
+    await page.setViewportSize({ width: 1366, height: 920 });
+  }
+  await page.locator("#smartjobapply-panel [data-action='profile-add-record']").click({ timeout: 3000 });
+  const educationCountAfterAdd = await page.locator("#smartjobapply-panel .sja-profile-record").count();
+  await page.locator("#smartjobapply-panel [data-action='profile-move-record'][data-record-index='2'][data-direction='-1']").click({ timeout: 3000 });
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#smartjobapply-panel [data-action='profile-remove-record'][data-record-index='1']").click({ timeout: 3000 });
+  const educationCountAfterRemove = await page.locator("#smartjobapply-panel .sja-profile-record").count();
+  await page.locator("#smartjobapply-panel [data-action='profile-save']").click({ timeout: 3000 });
+  await page.waitForFunction(() => document.querySelector("#smartjobapply-panel")?.textContent?.includes("Saved to your profile."), null, { timeout: 10000 });
+  if (profileScreenshotDir) {
+    await page.locator("#smartjobapply-panel [data-profile-section='preferences']").click({ timeout: 3000 });
+    await page.setViewportSize({ width: 320, height: 768 });
+    await page.screenshot({ path: path.resolve(profileScreenshotDir, "profile-preferences-320.png"), fullPage: false });
+    await page.setViewportSize({ width: 1366, height: 920 });
+  }
+  await page.locator("#smartjobapply-panel [data-action='workspace-back']").click({ timeout: 3000 });
+  await page.waitForSelector("#smartjobapply-panel [data-tab='autofill']", { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.matches("#smartjobapply-panel .sja-account-menu > summary"), null, { timeout: 3000 });
+  const focusRestored = await page.evaluate(() => document.activeElement?.matches("#smartjobapply-panel .sja-account-menu > summary") || false);
+
+  await page.locator("#smartjobapply-panel .sja-account-menu summary").click({ timeout: 3000 });
+  await page.locator("#smartjobapply-panel [data-action='open-autofill-information']").first().click({ timeout: 3000 });
+  await page.locator("#smartjobapply-panel [data-profile-path='first_name']").fill("Unsaved name");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#smartjobapply-panel [data-action='workspace-back']").click({ timeout: 3000 });
+  await page.waitForSelector("#smartjobapply-panel [data-tab='autofill']", { timeout: 3000 });
+
+  return {
+    saved_address_line2: qaState.profile.address.line2,
+    patch_keys: qaState.profilePatches.map((patch) => Object.keys(patch).sort()),
+    education_count: educationCount,
+    education_count_after_add: educationCountAfterAdd,
+    education_count_after_remove: educationCountAfterRemove,
+    unsaved_first_name_preserved: qaState.profile.first_name,
+    initial_focus_path: initialFocusPath,
+    focus_restored: focusRestored,
+    workspace_closed: !await page.locator("#smartjobapply-panel [data-profile-workspace]").count(),
+  };
+}
+
+function qaProfileFixture() {
+  return {
+    profile_id: "qa",
+    full_name: "ApplyTeX QA Candidate",
+    first_name: "ApplyTeX",
+    last_name: "Candidate",
+    email: "qa@example.test",
+    phone: "+1 202-555-0142",
+    location: "Austin, TX",
+    address: { line1: "100 Test Street", line2: "", city: "Austin", county: "Travis", state: "Texas", postal_code: "78701", country: "United States" },
+    linkedin_url: "https://www.linkedin.com/in/applytex-qa",
+    portfolio_url: "https://applytex-qa.example.test",
+    github_url: "https://github.com/applytex-qa",
+    skills: ["Claude", "Gemini", "Reinforcement Learning", "Git/GitHub", "Azure", "Python", "SQL", "Java"],
+    education: { school: "University of Houston", degree: "M.S. in Engineering Data Science & Artificial Intelligence", degree_level: "MS", major: "Data Science", field_of_study_candidates: ["Data Science", "Computer Engineering"], start_date: "2025-08", end_date: "2027-05", currently_studying: true, graduation_month: "May", graduation_year: "2027", gpa: "4.0/4.0" },
+    educations: [
+      { school: "University of Houston", degree: "M.S. in Engineering Data Science & Artificial Intelligence", degree_level: "MS", major: "Data Science", field_of_study_candidates: ["Data Science", "Computer Engineering"], start_date: "2025-08", end_date: "2027-05", currently_studying: true, graduation_month: "May", graduation_year: "2027", gpa: "4.0/4.0" },
+      { school: "Amrita School of Engineering", degree: "B.Tech in Computer Science and Engineering (Artificial Intelligence)", degree_level: "BS", major: "Computer Science and Engineering", field_of_study_candidates: ["Computer Science", "Computer Engineering"], start_date: "2019-06", end_date: "2023-05", currently_studying: false, graduation_month: "May", graduation_year: "2023", gpa: "8.43/10" },
+    ],
+    work_experiences: [
+      { company: "Accenture", job_title: "AI/ML Engineer", job_type: "Full-time", location: "Hyderabad, India", start_date: "2023-11", end_date: "2025-08", currently_working: false, summary: "Built applied AI systems.", bullets: ["Built applied AI systems."] },
+      { company: "Samsung PRISM", job_title: "Project Intern - Explainable AI", job_type: "Internship", location: "Bengaluru, India", start_date: "2021-09", end_date: "2022-04", currently_working: false, summary: "Researched explainable AI.", bullets: ["Researched explainable AI."] },
+    ],
+    work_authorization: { authorized_to_work_in_us: true, requires_sponsorship: false, current_requires_sponsorship: false, future_requires_sponsorship: true },
+    equal_opportunity: { allow_autofill: false, disability: null, gender: null, veteran_status: null, race: null, hispanic_or_latino: null, lgbtq: null, sexual_orientation: [], pronouns: null },
+    search_preferences: { target_roles: ["ai_engineer"], preferred_locations: ["Austin, TX"], allow_remote_us: true, allow_hybrid: true, allow_onsite: true, willing_to_relocate: true, accepted_employment_types: ["internship", "full_time"], prioritize_internships: true, excluded_title_terms: [] },
+    application_facts: { is_at_least_18: true, willing_to_relocate: true, willing_to_travel: true, active_non_compete_or_non_solicit: false, company_relationships: {}, compensation_preferences: [] },
+    custom_answers: {},
+    resume_filename: "qa-resume.pdf",
+    resume_pdf_filename: "qa-resume.pdf",
+    has_latex_source: false,
+    has_pdf: true,
+    resume_updated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function deepMergeObject(current, update) {
+  if (!current || typeof current !== "object" || Array.isArray(current)) return update;
+  if (!update || typeof update !== "object" || Array.isArray(update)) return update;
+  const merged = { ...current };
+  for (const [key, value] of Object.entries(update)) {
+    merged[key] = value && typeof value === "object" && !Array.isArray(value)
+      ? deepMergeObject(current[key], value)
+      : value;
+  }
+  return merged;
+}
+
 async function handleApiRoute(route, request, qaState, pathOverride = "") {
   const corsHeaders = {
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,OPTIONS",
     "access-control-allow-headers": "content-type",
     "access-control-allow-private-network": "true",
   };
@@ -747,34 +897,17 @@ async function handleApiRoute(route, request, qaState, pathOverride = "") {
     });
     return;
   }
+  if (url.pathname === "/profile" && request.method() === "PATCH") {
+    const body = await request.postDataJSON();
+    qaState.lastProfilePatch = body;
+    qaState.profilePatches.push(body);
+    qaState.profile = deepMergeObject(qaState.profile, body);
+    qaState.profile.updated_at = new Date().toISOString();
+    await sendJson(qaState.profile);
+    return;
+  }
   if (url.pathname === "/profile/view") {
-    await sendJson({
-      profile_id: "qa",
-      full_name: "ApplyTeX QA Candidate",
-      first_name: "ApplyTeX",
-      last_name: "Candidate",
-      email: "qa@example.test",
-      phone: "+1 202-555-0142",
-      location: "Austin, TX",
-      address: { city: "Austin", state: "Texas", postal_code: "78701", country: "United States" },
-      linkedin_url: "https://www.linkedin.com/in/applytex-qa",
-      portfolio_url: "https://applytex-qa.example.test",
-      github_url: "https://github.com/applytex-qa",
-      skills: ["Claude", "Gemini", "Reinforcement Learning", "Git/GitHub", "Azure", "Python", "SQL", "Java"],
-      education: { school: "University of Houston", degree: "M.S. in Engineering Data Science & Artificial Intelligence", degree_level: "MS", major: "Data Science", field_of_study_candidates: ["Data Science", "Computer Engineering"], start_date: "2025-08", end_date: "2027-05", gpa: "4.0/4.0" },
-      educations: [
-        { school: "University of Houston", degree: "M.S. in Engineering Data Science & Artificial Intelligence", degree_level: "MS", major: "Data Science", field_of_study_candidates: ["Data Science", "Computer Engineering"], start_date: "2025-08", end_date: "2027-05", gpa: "4.0/4.0" },
-        { school: "Amrita School of Engineering", degree: "B.Tech in Computer Science and Engineering (Artificial Intelligence)", degree_level: "BS", major: "Computer Science and Engineering", field_of_study_candidates: ["Computer Science", "Computer Engineering"], start_date: "2019-06", end_date: "2023-05", gpa: "8.43/10" },
-      ],
-      work_experiences: [
-        { company: "Accenture", job_title: "AI/ML Engineer", location: "Hyderabad, India", start_date: "2023-11", end_date: "2025-08" },
-        { company: "Samsung PRISM", job_title: "Project Intern – Explainable AI", location: "Bengaluru, India", start_date: "2021-09", end_date: "2022-04" },
-      ],
-      work_authorization: { authorized_to_work_in_us: true, requires_sponsorship: false },
-      equal_opportunity: { allow_autofill: false, sexual_orientation: [] },
-      search_preferences: {},
-      custom_answers: {},
-    });
+    await sendJson(qaState.profile);
     return;
   }
   if (url.pathname === "/profile/resume") {
@@ -783,7 +916,7 @@ async function handleApiRoute(route, request, qaState, pathOverride = "") {
       has_latex_source: false,
       resume_filename: "qa-resume.pdf",
       resume_pdf_filename: "qa-resume.pdf",
-      updated_at: new Date().toISOString(),
+      resume_updated_at: qaState.profile.resume_updated_at,
     });
     return;
   }
@@ -964,7 +1097,8 @@ function buildFillPlan(scan, requestBody = {}) {
     actions,
     review_items: reviewItems,
     unresolved_required: unresolvedRequired,
-    can_fill: unresolvedRequired.length === 0,
+    ready_action_count: actions.filter((action) => action.action !== "skip").length,
+    can_fill: actions.some((action) => action.action !== "skip"),
   };
 }
 
@@ -993,6 +1127,7 @@ function resolveQuestion(question) {
   if (question.input_type === "file" && /\b(resume|cv)\b/.test(label)) {
     return fillAction(question, "upload", null, "resume");
   }
+  if (question.input_type === "file") return fillAction(question, "skip", null, "none");
   if (question.input_type === "file") {
     return fillAction(question, "skip", null, question.required ? "user_input" : "none");
   }
@@ -1280,6 +1415,7 @@ function applicationForm(provider, index, company, location) {
       ${inputField("LinkedIn URL", "linkedin_url", "text", true)}
       ${inputField("GitHub URL", "github_url", "text", false)}
       ${fileField("Resume/CV", "resume", true)}
+      ${provider === "greenhouse" && index === 1 ? `<div role="group" aria-label="Cover Letter*"><div><span>Attach</span><input id="supporting_file" type="file" accept="application/pdf" style="display:none"></div></div>` : ""}
       ${authorizationQuestions}
       ${provider === "ashby" ? ashbyCheckboxGroup() : ""}
       ${provider === "workday" ? workdayProfileSections() : ""}
@@ -1791,6 +1927,7 @@ function summarize(records, failures, qaState) {
     jobs_per_provider: jobsPerProvider,
     providers,
     total_jobs_tested: records.length,
+    profile_workspace: qaState.profileWorkspace,
     provider_stats: providerStats,
     frequent_questions_not_in_catalog: sortedQuestionCounts(frequentNotInCatalog),
     unresolved_required_not_in_catalog: sortedQuestionCounts(uncovered),
@@ -1979,22 +2116,10 @@ function providerUrl(provider, index) {
 }
 
 function companyFor(provider) {
-  const names = {
-    linkedin: "LinkedIn Fixture AI",
-    greenhouse: "Greenhouse Fixture AI",
-    lever: "Lever Fixture AI",
-    ashby: "Ashby Fixture AI",
-    workday: "Workday Fixture AI",
-    icims: "iCIMS Fixture AI",
-    smartrecruiters: "SmartRecruiters Fixture AI",
-    workable: "Workable Fixture AI",
-    indeed: "Indeed Fixture AI",
-    ziprecruiter: "ZipRecruiter Fixture AI",
-    glassdoor: "Glassdoor Fixture AI",
-    wellfound: "Wellfound Fixture AI",
-    dice: "Dice Fixture AI",
-  };
-  return names[provider] || "ApplyTeX Fixture AI";
+  // Employer names must not masquerade as ATS branding: capture deliberately
+  // filters the provider name out of company metadata.
+  const names = ["Atlas", "Birch", "Cedar", "Delta", "Elm", "Fir", "Grove", "Harbor", "Iris", "Juniper", "Kestrel", "Linden", "Maple"];
+  return `${names[availableProviders.indexOf(provider)] || "Example"} Fixture AI`;
 }
 
 function roleFor(index) {
