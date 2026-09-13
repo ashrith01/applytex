@@ -60,19 +60,46 @@ persistence, authentication, and production approval workflows are not built yet
 
 ## Module Map
 
+### Resume engine (the six-stage core)
+
 | File | Responsibility |
 |------|----------------|
 | `src/latex_resume/models.py` | Pydantic schema: `LatexResumeDoc`, `Section`, `Entry`, `Statement`, `SkillLine`, `StmtSpan`, `LayoutParams`, `PageBudget`, `ParseResult`. `SectionType` enum + editable/locked frozensets. |
 | `src/latex_resume/parser.py` | `parse()` → `ParseResult`. Brace-aware section scan, keyword classification, `\item` span extraction, `stmt_id` assignment. |
 | `src/latex_resume/reconstructor.py` | `apply_changes()` (splice), `set_layout_params()` (preamble block insert/replace). |
-| `src/latex_resume/renderer.py` | `render_pdf()` (pdflatex subprocess + pypdf page count), `check_one_page()` (with word-count fallback). |
+| `src/latex_resume/renderer.py` | `render_pdf()` (pdflatex subprocess + pypdf page count), `check_one_page()` (page count + lowest-baseline geometry, word-count fallback). |
 | `src/latex_resume/engine.py` | Facade (`parse_file`, `reconstruct`) + CLI smoke test. |
 | `src/latex_resume/extractor.py` | Full read-only resume extraction with LaTeX stripped for display/ATS context. |
-| `src/latex_resume/optimizer.py` | Experimental LLM optimization orchestration, validation, ATS before/after scoring. |
-| `src/latex_resume/llm.py` | Wired JSON LLM backends: Groq, Anthropic, Ollama. OpenAI/Gemini are placeholders. |
-| `src/latex_resume/ats.py` | Deterministic keyword/skill match scoring. |
-| `src/latex_resume/session.py` | In-memory FastAPI session store. |
-| `src/latex_resume/api.py` | Local FastAPI upload/optimize/status/rerender/delete routes. |
+| `src/latex_resume/optimizer.py` | LLM optimization orchestration, reviewer loop, overflow repair, ATS before/after scoring. |
+| `src/latex_resume/change_validation.py` | Truthfulness / claim-drift gates applied to every proposed statement edit. |
+| `src/latex_resume/ats.py`, `screening.py` | Deterministic keyword/skill fit scoring and five-category recruiter-style analysis. |
+| `src/latex_resume/llm.py`, `llm_routing.py` | JSON LLM backends (Groq, Anthropic, Ollama, Codex SDK; OpenAI for answer drafting only; Gemini placeholder) and per-stage routing. |
+
+### HTTP layer
+
+| File | Responsibility |
+|------|----------------|
+| `src/latex_resume/api.py` | App factory (`create_app`), lifespan, rate limiter, and the shared request/response Pydantic models + helpers the routers import. Still large; schemas/services extraction is pending. |
+| `src/latex_resume/routers/` | Route modules: `latex` (classic upload/optimize), `tailor` (guided sessions), `profiles`, `jobs`, `applications`, `extension`, `auth`. `_deps.py` holds profile-ownership dependencies (`require_*_for_profile` → 404, never 403). |
+| `src/latex_resume/session.py` | **In-memory** store for classic `/latex/*` sessions (lost on restart). |
+| `src/latex_resume/tailor_store.py` | SQLite-backed tailor sessions. |
+| `src/latex_resume/local_auth.py` | Optional bearer-token auth (`APPLYTEX_REQUIRE_AUTH=1`), scrypt passwords, in-process token dict. |
+| `src/latex_resume/logging_config.py` | structlog setup (console or JSON). |
+
+### Job application platform
+
+| File | Responsibility |
+|------|----------------|
+| `src/latex_resume/job_models.py` | Domain contracts: `JobPosting`, `CandidateProfile`, `FormQuestion`, `FillAction`, `ApplicationRecord`, and `ALLOWED_APPLICATION_TRANSITIONS` state machine. |
+| `src/latex_resume/application_store.py` | SQLite persistence for searches, jobs, applications, artifacts, events, tasks, profiles, form scans, tailor sessions, settings. |
+| `src/latex_resume/job_sources.py`, `job_matching.py` | Public Greenhouse/Lever/Ashby board adapters; role/location preference matching. |
+| `src/latex_resume/form_resolution.py`, `option_matching.py` | Deterministic answer resolution for scanned forms. Unknown → `skip` with `answer_source="user_input"`; select options matched exact/alias only. |
+| `src/latex_resume/application_answers.py` | Grounded ≤100-word drafts for narrative screening questions with a claim validator. |
+| `src/latex_resume/profile_extraction.py`, `project_library.py`, `project_scoring.py` | Resume → profile prefill; project library and per-job project ranking. |
+| `extension/` | MV3 Chrome extension. `panel.js` (scan / plan / fill / review UI, large IIFE), `panel-profile.js`, `providers.js` (13 host adapters), `background.js` (API proxy to `127.0.0.1:8000`). Never clicks the final Submit button. |
+| `frontend/` | Next.js 15 UI: profile, jobs, applications kanban, guided tailor, Resume Lab. |
+| `src/latex_resume/streamlit_app.py` | Legacy Streamlit UI. Kept intentionally for now. |
+| `scripts/autofill_lab.py` + `scripts/autofill_lab_qa.mjs` | Synthetic application lab (real API + real panel scripts, fictional profile) and its Playwright QA runner. |
 
 ---
 
@@ -106,9 +133,15 @@ uv sync                                                  # install deps
 uv run pytest                                            # full suite (latex tests skip if no pdflatex)
 uv run pytest tests/test_parser.py -q                    # one file
 uv run python -m latex_resume.engine samples/sample_resume.tex   # CLI smoke test
+uv run applytex-api                                      # FastAPI on :8000
+cd frontend && npm run typecheck && npm run lint         # frontend gates (CI runs these)
+uv run python scripts/autofill_lab.py                    # synthetic lab on :8765, then:
+node scripts/autofill_lab_qa.mjs                         # Playwright QA (needs frontend/node_modules)
 ```
 
 LaTeX-dependent tests are marked and auto-skip when `pdflatex` is not on PATH.
+`pytest` `pythonpath` is `["src", "."]` — the `.` is required so tests can
+import `scripts.autofill_lab`.
 
 ---
 
@@ -120,8 +153,12 @@ LaTeX-dependent tests are marked and auto-skip when `pdflatex` is not on PATH.
   exist for local development. Remaining work: persistence, authentication,
   production hardening, durable approval states, and optional direct
   OpenAI/Gemini backend implementations.
-- **Increment 3:** Next.js frontend — side-by-side PDF.js view, layout controls, SyncTeX
-  hover-highlight overlay (green box per changed statement).
+- **Increment 3 (done):** Next.js frontend — side-by-side PDF.js view, layout controls,
+  SyncTeX hover-highlight overlay (green box per changed statement).
+- **Increment 4 (in progress):** job application platform — extension capture/scan/
+  reviewed fill, SQLite application tracker, profile-driven answers. Next phases are
+  in `docs/TSENTA_PARITY_PLAN.md`: answers bank + review-gated resolver, curated
+  watchlist feed, submission receipt, local review-gated executor.
 
 ---
 

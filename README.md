@@ -68,58 +68,118 @@ Current limitations:
   separately through local Codex authentication.
 - Fit scores are not calibrated to any single commercial ATS vendor.
 
-See [`docs/JOBRIGHT_AND_ATS_AUDIT.md`](docs/JOBRIGHT_AND_ATS_AUDIT.md) for the
-Jobright comparison, provider workflow matrix, live-verification status, and
-cross-provider browser QA results.
+See [`docs/JOBRIGHT_PARITY_PLAN.md`](docs/JOBRIGHT_PARITY_PLAN.md) for the
+September 2026 live comparison, current feature inventory, and implementation priorities.
+The July [ATS audit](docs/JOBRIGHT_AND_ATS_AUDIT.md) is historical evidence.
+
+The [autofill strategy and evaluation plan](docs/AUTOFILL_STRATEGY_AND_EVALUATION.md)
+explains saved facts, question/option matching, platform adapters and the synthetic
+application lab. The [ML portfolio roadmap](docs/ML_PORTFOLIO_ROADMAP.md) proposes
+grounded retrieval, held-out evaluation, model comparisons and evidence tracking.
+
+### Try the synthetic application lab
+
+```bash
+uv run python scripts/autofill_lab.py
+# Open http://127.0.0.1:8765/lab
+# In another terminal, with frontend Playwright dependencies installed:
+node scripts/autofill_lab_qa.mjs
+```
+
+The 39 scenarios use fictional data, the real API and extension panel scripts,
+with a local message bridge. They test selected answers, missing facts, separate
+documents, repeated fills and multi-step forms. This is synthetic integration
+coverage, not proof of every employer form or installed-extension behavior.
 
 ## Quick Start
 
-Requirements:
+**Requirements:** Python 3.12+, [`uv`](https://docs.astral.sh/uv/), Node 18+ for the UI. `pdflatex` for PDF rendering (optional but recommended).
 
-- Python 3.12 or 3.13
-- [`uv`](https://docs.astral.sh/uv/)
-- `pdflatex` for PDF rendering, recommended but optional
+### 1. Clone and install
 
 ```bash
-uv sync --locked
+git clone https://github.com/ashrith01/applytex.git
+cd applytex
+uv sync --locked          # installs all Python deps
 uv run pytest
 ```
 
-Launch the web UI (recommended):
+### 2. Configure an LLM backend
+
+Copy `.env.example` to `.env` and fill in **one** backend:
+
+```dotenv
+# Option A — free Groq tier (fastest to start)
+LLM_BACKEND=groq
+GROQ_API_KEY=gsk_...
+
+# Option B — Anthropic
+LLM_BACKEND=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Option C — local Ollama (no API key required)
+LLM_BACKEND=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
+```
+
+### 3. Start the API and web UI
 
 ```bash
-# Terminal 1 — API
+# Terminal 1 — FastAPI backend
 uv run applytex-api
+# → http://localhost:8000  (interactive docs at /docs)
 
-# Terminal 2 — frontend
+# Terminal 2 — Next.js frontend
 cd frontend && npm install && npm run dev
+# → http://localhost:3000
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Sign in with a local username, complete your profile, and tailor resumes against saved or captured jobs.
 
-The legacy Streamlit UI remains available for one release cycle:
+### 4. Smoke-test the API directly
 
 ```bash
-uv run streamlit run src/latex_resume/streamlit_app.py --server.port 8501
+# Upload a résumé
+curl -s -F "file=@samples/sample_resume.tex" http://localhost:8000/latex/upload | jq .session_id
+
+# Optimize against a JD  (replace <session_id>)
+curl -s -X POST http://localhost:8000/latex/optimize \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<session_id>","job_description":"We need a Python backend engineer with FastAPI experience."}' \
+  | jq '{overflow, page_count, ats_target_met}'
 ```
 
-Open [http://localhost:8501](http://localhost:8501). The public repository ships
-with a synthetic resume and paraphrased job-description fixture, so the UI works
-without private data or API keys. Deterministic analysis remains available when
-an LLM provider is not configured.
-
-Run the core parser and renderer:
+### Optional extras
 
 ```bash
+# Streamlit legacy UI
+pip install "applytex[ui]"
+uv run streamlit run src/latex_resume/streamlit_app.py --server.port 8501
+
+# Parser smoke test (no LLM, no pdflatex required)
 uv run python -m latex_resume.engine samples/sample_resume.tex
 ```
 
-Run the local API:
+## Environment Variables
 
-```bash
-uv run applytex-api
-# API docs: http://localhost:8000/docs
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLM_BACKEND` | `ollama` | Active LLM provider: `groq` \| `anthropic` \| `ollama` \| `codex` \| `openai` |
+| `GROQ_API_KEY` | — | Required when `LLM_BACKEND=groq` |
+| `ANTHROPIC_API_KEY` | — | Required when `LLM_BACKEND=anthropic` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server address |
+| `OLLAMA_MODEL` | `qwen3:4b` | Default Ollama model |
+| `APPLYTEX_DB_PATH` | `.applytex/applytex.db` | SQLite database path (must be writable at startup) |
+| `APPLYTEX_REQUIRE_AUTH` | `0` | Set to `1` to require bearer-token auth on all API routes |
+| `APPLYTEX_LOG_FORMAT` | `console` | Log format: `console` (coloured key=value) or `json` (for log pipelines) |
+| `LOG_LEVEL` | `info` | Log level: `debug` \| `info` \| `warning` \| `error` |
+| `HOST` | `127.0.0.1` | API bind address |
+| `PORT` | `8000` | API bind port |
+| `SMARTJOBAPPLY_LANGSMITH_TRACE` | `false` | Send pipeline traces to LangSmith |
+| `LANGSMITH_API_KEY` | — | Required when tracing is on |
+
+See `.env.example` for the full list including per-task model routing variables.
 
 ## Model Configuration
 
@@ -188,6 +248,38 @@ The Chrome extension lives in [`extension/`](extension/). Load it as an unpacked
 extension after starting the API. It captures jobs, scans application forms,
 and fills only after a separate user click. Final submission remains manual.
 
+## Key API Endpoints
+
+Full interactive docs at `http://localhost:8000/docs` when the API is running.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/health` | Liveness check |
+| `POST` | `/latex/upload` | Upload `.tex` file, returns `session_id` |
+| `POST` | `/latex/optimize` | Run LLM pipeline against a JD (10 req/min) |
+| `POST` | `/latex/{id}/rerender` | Apply manual edits and recompile |
+| `GET` | `/latex/{id}/status` | Poll session state |
+| `DELETE` | `/latex/{id}` | Delete session (204) |
+| `POST` | `/latex/analyze` | Score resume vs JD without rewriting |
+| `GET` | `/profile` | Get active candidate profile |
+| `PATCH` | `/profile` | Update profile fields |
+| `POST` | `/profile/resume` | Upload LaTeX or PDF resume to profile |
+| `GET` | `/profiles` | List all local profiles |
+| `POST` | `/tailor/sessions` | Start a guided tailor session |
+| `POST` | `/tailor/sessions/{id}/optimize` | Run LLM tailor (10 req/min) |
+| `POST` | `/tailor/sessions/{id}/refine` | Refine with a plain-English instruction |
+| `POST` | `/tailor/sessions/{id}/approve` | Approve and persist the tailored PDF |
+| `POST` | `/jobs/search` | Search Greenhouse, Lever, or Ashby boards |
+| `GET` | `/jobs` | List captured jobs |
+| `POST` | `/applications` | Create an application record |
+| `GET` | `/applications` | List applications with filter/sort |
+| `POST` | `/extension/jobs/capture` | Browser extension job capture |
+| `POST` | `/extension/forms/scan` | Scan a job-application form |
+| `GET` | `/extension/forms/{id}/plan` | Generate a fill plan for a scanned form |
+| `POST` | `/auth/login` | Exchange profile ID + password for a bearer token |
+
+LLM routes are rate-limited to 10 requests per minute per client IP. All other routes share a 200/minute global limit.
+
 ## Pipeline
 
 ```mermaid
@@ -249,22 +341,29 @@ by default.
 ## Repository Structure
 
 ```text
-frontend/                Next.js web UI (primary)
+frontend/                    Next.js 15 web UI (primary)
+  src/app/tailor/            5-step guided tailor flow with PDF.js preview,
+                             SyncTeX hover-highlight, and layout controls
+extension/                   Chrome extension (MV3) for 13 ATS providers
 src/latex_resume/
-  parser.py              LaTeX section and statement-span extraction
-  reconstructor.py       Byte-preserving statement replacement
-  renderer.py            PDF compilation and visual one-page enforcement
-  ats.py                 Submission-fit scoring
-  screening.py           Recruiter-style category analysis
-  optimizer.py           Optimization and reviewer orchestration
-  change_validation.py   Truthfulness and claim-drift gates
-  llm.py                 Provider adapters and usage tracking
-  streamlit_app.py       Legacy Streamlit UI (deprecated)
-  api.py                 FastAPI development interface
-  job_models.py          Job, profile, form, and workflow contracts
-  job_sources.py         Public ATS job-board adapters
-  application_store.py   SQLite job and application persistence
-  benchmark/             Corpus, runner, audit, review, and reporting tools
+  parser.py                  LaTeX section and statement-span extraction
+  reconstructor.py           Byte-preserving statement replacement
+  renderer.py                PDF compilation and visual one-page enforcement
+  ats.py                     Submission-fit scoring
+  screening.py               Recruiter-style category analysis
+  optimizer.py               Optimization and reviewer orchestration
+  change_validation.py       Truthfulness and claim-drift gates
+  llm.py                     Provider adapters, retry logic, usage tracking
+  logging_config.py          Structured logging (structlog, JSON or console)
+  local_auth.py              Optional bearer-token auth (scrypt password KDF)
+  api.py                     FastAPI app factory + shared models/helpers
+  routers/                   Route modules (latex, profiles, applications,
+                             jobs, extension, tailor, auth)
+  job_models.py              Job, profile, form, and workflow contracts
+  job_sources.py             Public ATS job-board adapters
+  application_store.py       SQLite job and application persistence
+  benchmark/                 Corpus, runner, audit, review, and reporting tools
+tests/                       316 tests — no LLM calls required
 ```
 
 ## Safety And Data Handling
