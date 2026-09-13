@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -10,8 +10,10 @@ import {
   ExternalLink,
   FileText,
   Github,
+  Loader2,
   RefreshCw,
   ShieldCheck,
+  SlidersHorizontal,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
@@ -25,9 +27,11 @@ import { SkillConfirmGrid } from "@/components/shared/skill-confirm-grid";
 import { Stepper } from "@/components/shared/stepper";
 import { StatementDiffList } from "@/components/shared/statement-diff-list";
 import { PdfPane } from "@/components/shared/pdf-pane";
+import type { HighlightRect } from "@/components/shared/pdf-pane";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth/profile-context";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
 const STEPS = ["Analyze", "Select projects", "Confirm evidence", "Review", "Approve"];
 
@@ -40,6 +44,87 @@ type TailorLastResult = {
   page_count?: number;
   warnings?: string[];
 };
+
+async function findTextInPdf(
+  doc: PDFDocumentProxy,
+  searchText: string,
+): Promise<HighlightRect | null> {
+  const words = searchText.trim().split(/\s+/);
+  if (words.length < 3) return null;
+
+  const segmentLength = 6;
+  const segments: string[] = [];
+  for (let i = 0; i <= words.length - segmentLength; i += 1) {
+    segments.push(words.slice(i, i + segmentLength).join(" ").toLowerCase());
+  }
+  if (segments.length === 0) {
+    segments.push(words.slice(0, Math.min(segmentLength, words.length)).join(" ").toLowerCase());
+  }
+
+  for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
+    const page = await doc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1 });
+    const textContent = await page.getTextContent();
+
+    const items = textContent.items as Array<{
+      str: string;
+      transform: number[];
+      width: number;
+      height: number;
+    }>;
+
+    const fullText = items.map((it) => it.str).join(" ").toLowerCase();
+
+    for (const segment of segments) {
+      const idx = fullText.indexOf(segment);
+      if (idx === -1) continue;
+
+      let charCount = 0;
+      let startItem = -1;
+      let endItem = -1;
+      for (let i = 0; i < items.length; i += 1) {
+        const itemText = items[i].str + " ";
+        if (startItem === -1 && charCount + itemText.length > idx) {
+          startItem = i;
+        }
+        if (startItem !== -1 && charCount + itemText.length >= idx + segment.length) {
+          endItem = i;
+          break;
+        }
+        charCount += itemText.length;
+      }
+
+      if (startItem === -1 || endItem === -1) continue;
+
+      const pageHeight = viewport.height;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (let i = startItem; i <= endItem; i += 1) {
+        const item = items[i];
+        const [, , , , tx, ty] = item.transform;
+        const x = tx;
+        const y = pageHeight - ty - item.height;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + item.width);
+        maxY = Math.max(maxY, y + item.height);
+      }
+
+      return {
+        page: pageNum,
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      };
+    }
+  }
+
+  return null;
+}
 
 export default function TailorPageClient({ params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = use(params);
@@ -55,6 +140,15 @@ export default function TailorPageClient({ params }: { params: Promise<{ jobId: 
   const [bootstrapped, setBootstrapped] = useState(false);
   const [approvedArtifact, setApprovedArtifact] = useState<ApplicationArtifact | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+
+  const [hoveredText, setHoveredText] = useState<string | null>(null);
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
+  const [highlightRects, setHighlightRects] = useState<HighlightRect[]>([]);
+  const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [layoutMargin, setLayoutMargin] = useState(0.5);
+  const [layoutFontSize, setLayoutFontSize] = useState(10);
+  const layoutDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const mergeProjectRank = (rank: ProjectRankResponse) => {
     qc.setQueryData<TailorSessionResponse | undefined>(["tailor", sessionId], (old) =>
@@ -147,6 +241,13 @@ export default function TailorPageClient({ params }: { params: Promise<{ jobId: 
     },
   });
 
+  const layoutRefine = useMutation({
+    mutationFn: (inst: string) => api.refineTailorSession(sessionId!, { instruction: inst }),
+    onSuccess: (data) => {
+      qc.setQueryData(["tailor", sessionId], data);
+    },
+  });
+
   const approve = useMutation({
     mutationFn: () =>
       api.approveTailorSession(sessionId!, {
@@ -161,6 +262,52 @@ export default function TailorPageClient({ params }: { params: Promise<{ jobId: 
       qc.invalidateQueries({ queryKey: ["applications"] });
     },
   });
+
+  const handleDocumentLoaded = useCallback((doc: PDFDocumentProxy) => {
+    setPdfDoc(doc);
+  }, []);
+
+  useEffect(() => {
+    if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+
+    if (!hoveredText || !pdfDoc) {
+      setHighlightRects([]);
+      return;
+    }
+
+    hoverDebounceRef.current = setTimeout(async () => {
+      const rect = await findTextInPdf(pdfDoc, hoveredText);
+      setHighlightRects(rect ? [rect] : []);
+    }, 120);
+
+    return () => {
+      if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+    };
+  }, [hoveredText, pdfDoc]);
+
+  const handleHoverChange = useCallback((text: string | null) => {
+    setHoveredText(text);
+  }, []);
+
+  const handleMarginChange = (value: number) => {
+    setLayoutMargin(value);
+    if (layoutDebounceRef.current) clearTimeout(layoutDebounceRef.current);
+    layoutDebounceRef.current = setTimeout(() => {
+      layoutRefine.mutate(
+        `Adjust layout: set top/bottom margin to ${value}in and font size to ${layoutFontSize}pt to fit one page.`,
+      );
+    }, 800);
+  };
+
+  const handleFontSizeChange = (value: number) => {
+    setLayoutFontSize(value);
+    if (layoutDebounceRef.current) clearTimeout(layoutDebounceRef.current);
+    layoutDebounceRef.current = setTimeout(() => {
+      layoutRefine.mutate(
+        `Adjust layout: set top/bottom margin to ${layoutMargin}in and font size to ${value}pt to fit one page.`,
+      );
+    }, 800);
+  };
 
   if (bootstrap.isError) {
     return (
@@ -471,34 +618,108 @@ export default function TailorPageClient({ params }: { params: Promise<{ jobId: 
             )}
           </Card>
           <div className="grid gap-6 xl:grid-cols-2">
-            <PdfPane base64={pdfB64} />
-            <Card>
-              <CardTitle>Refine wording</CardTitle>
-              <CardDescription className="mt-2">
-                Add a precise instruction for the current tailored source. Keep changes factual and defensible.
-              </CardDescription>
-              <textarea
-                className="mt-4 min-h-[120px] w-full rounded-md border border-border p-3 text-sm"
-                value={instruction}
-                onChange={(e) => setInstruction(e.target.value)}
-                placeholder="Example: make the project bullets more backend-focused without adding new tools"
-              />
-              <Button className="mt-3 w-full" onClick={() => refine.mutate()} disabled={!instruction.trim() || refine.isPending}>
-                {refine.isPending ? "Applying..." : "Apply instruction"}
-              </Button>
-              {data.last_result && (
-                <p className="mt-4 text-sm text-ink-muted">
-                  Fit after changes: {lastResult?.ats_after?.score?.toFixed(1) ?? "not scored"}/100
-                </p>
-              )}
-            </Card>
+            <PdfPane
+              base64={pdfB64}
+              highlightRects={highlightRects}
+              onDocumentLoaded={handleDocumentLoaded}
+            />
+            <div className="space-y-4">
+              <Card>
+                <CardTitle>Refine wording</CardTitle>
+                <CardDescription className="mt-2">
+                  Add a precise instruction for the current tailored source. Keep changes factual and defensible.
+                </CardDescription>
+                <textarea
+                  className="mt-4 min-h-[120px] w-full rounded-md border border-border p-3 text-sm"
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  placeholder="Example: make the project bullets more backend-focused without adding new tools"
+                />
+                <Button className="mt-3 w-full" onClick={() => refine.mutate()} disabled={!instruction.trim() || refine.isPending}>
+                  {refine.isPending ? "Applying..." : "Apply instruction"}
+                </Button>
+                {data.last_result && (
+                  <p className="mt-4 text-sm text-ink-muted">
+                    Fit after changes: {lastResult?.ats_after?.score?.toFixed(1) ?? "not scored"}/100
+                  </p>
+                )}
+              </Card>
+
+              <Card>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="flex items-center gap-2">
+                    <SlidersHorizontal className="h-4 w-4 text-primary" />
+                    Layout
+                  </CardTitle>
+                  {layoutRefine.isPending && (
+                    <div className="flex items-center gap-1.5 text-xs text-ink-muted">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Applying...
+                    </div>
+                  )}
+                </div>
+                <CardDescription className="mt-2">
+                  Adjust margins and font size to fit the resume on one page.
+                </CardDescription>
+                <div className="mt-4 space-y-5">
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="text-sm font-medium text-ink" htmlFor="layout-margin">
+                        Top / bottom margin
+                      </label>
+                      <span className="font-mono text-sm font-bold text-primary">
+                        {layoutMargin.toFixed(2)} in
+                      </span>
+                    </div>
+                    <input
+                      id="layout-margin"
+                      type="range"
+                      min={0.3}
+                      max={1.2}
+                      step={0.05}
+                      value={layoutMargin}
+                      onChange={(e) => handleMarginChange(Number(e.target.value))}
+                      className="w-full accent-emerald-600"
+                    />
+                    <div className="mt-1 flex justify-between text-xs text-ink-muted">
+                      <span>0.3 in</span>
+                      <span>1.2 in</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="text-sm font-medium text-ink" htmlFor="layout-fontsize">
+                        Font size
+                      </label>
+                      <span className="font-mono text-sm font-bold text-primary">
+                        {layoutFontSize.toFixed(1)} pt
+                      </span>
+                    </div>
+                    <input
+                      id="layout-fontsize"
+                      type="range"
+                      min={9}
+                      max={11}
+                      step={0.5}
+                      value={layoutFontSize}
+                      onChange={(e) => handleFontSizeChange(Number(e.target.value))}
+                      className="w-full accent-emerald-600"
+                    />
+                    <div className="mt-1 flex justify-between text-xs text-ink-muted">
+                      <span>9 pt</span>
+                      <span>11 pt</span>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            </div>
           </div>
           <div>
             <div className="mb-3 flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
               <h2 className="text-2xl font-extrabold">Changed statements</h2>
             </div>
-            <StatementDiffList diffs={data.diff} />
+            <StatementDiffList diffs={data.diff} onHoverChange={handleHoverChange} />
           </div>
           {lastResult?.modified_latex ? (
             <a
