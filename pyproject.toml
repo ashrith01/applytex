@@ -38,6 +38,7 @@ all = [
 applytex = "latex_resume.engine:main"
 applytex-api = "latex_resume.api:run"
 applytex-benchmark = "latex_resume.benchmark.cli:main"
+applytex-watchlist = "latex_resume.watchlist_cli:main"
 latex-resume = "latex_resume.engine:main"
 latex-resume-api = "latex_resume.api:run"
 smartjob-benchmark = "latex_resume.benchmark.cli:main"
