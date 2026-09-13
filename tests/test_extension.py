@@ -868,3 +868,16 @@ def test_extension_optional_bearer_auth_contracts() -> None:
     assert "Authorization" in background
     assert "usableProfiles" in panel
     assert "Bearer " in background
+
+
+def test_panel_answers_bank_actions_are_review_gated() -> None:
+    """Suggestions are shown with their evidence and filled only after a click."""
+    panel = panel_source()
+    assert "data-action=\"propose-answers\"" in panel
+    assert "data-action=\"apply-proposal\"" in panel
+    assert "/answers/propose" in panel
+    assert "/answers/used" in panel
+    assert "window.confirm(\"Remember this answer for future application forms?" in panel
+    # A proposal never fills the page directly; it goes through the reviewed plan override.
+    assert "overrides: { [fieldId]: proposal.value }" in panel
+    assert "remember," in panel
