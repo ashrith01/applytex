@@ -654,6 +654,7 @@ class FormScan(BaseModel):
     page_title: str = ""
     step_key: str = ""
     form_signature: str = ""
+    replace_existing: bool = False
     questions: list[FormQuestion] = Field(default_factory=list, max_length=300)
     plan_overrides: dict[str, PlanOverride] = Field(default_factory=dict)
     captured_at: str = Field(default_factory=utc_now)
@@ -720,3 +721,4 @@ class FillAction(BaseModel):
         "eeo_opt_in",
     ]
     requires_review: bool = True
+    resolution_reason: str = ""

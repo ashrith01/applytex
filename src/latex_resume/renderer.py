@@ -67,13 +67,16 @@ def render_pdf(
         (tmp_path / "resume.tex").write_text(tex, encoding="utf-8")
         log = ""
         for _ in range(max(1, passes)):
-            proc = subprocess.run(
-                [engine, "-interaction=nonstopmode", "resume.tex"],
-                cwd=tmp,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            try:
+                proc = subprocess.run(
+                    [engine, "-interaction=nonstopmode", "--no-shell-escape", "resume.tex"],
+                    cwd=tmp,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                return RenderResult(ok=False, error="timeout", log=f"pdflatex exceeded {timeout}s timeout")
             log = proc.stdout + proc.stderr
 
         pdf_path = tmp_path / "resume.pdf"

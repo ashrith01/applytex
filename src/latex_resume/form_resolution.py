@@ -16,6 +16,7 @@ from latex_resume.job_models import (
     WorkExperienceProfile,
 )
 from latex_resume.profile_extraction import degree_level_from_degree, field_of_study_candidates
+from latex_resume.option_matching import match_available_option
 
 _US_STATE_CODE_BY_NAME = {
     "alabama": "AL",
@@ -584,7 +585,7 @@ def resolve_form_questions(
                 work=work,
             )
         )
-    return actions
+    return [validate_action_options(question, action) for question, action in zip(questions, actions, strict=True)]
 
 
 def _resolve_question(
@@ -610,8 +611,11 @@ def _resolve_question(
     work_record = work
     is_workday = provider == "workday"
 
-    if question.input_type == "file" and any(term in label for term in ("resume", "cv")):
-        if profile.resume_pdf_b64 or profile.resume_pdf_path or profile.resume_latex_source:
+    if question.input_type == "file":
+        # A saved text answer cannot satisfy an attachment control. In particular,
+        # never send the resume to a cover-letter or other supporting-file field.
+        is_resume = bool(re.search(r"\b(?:resume|cv|curriculum vitae)\b", label)) and "cover" not in label
+        if is_resume and (profile.resume_pdf_b64 or profile.resume_pdf_path or profile.resume_latex_source):
             return FillAction(
                 field_id=question.field_id,
                 action="upload",
@@ -1579,6 +1583,10 @@ def _resolve_equal_opportunity(
             value=None,
             answer_source="eeo_opt_in",
         )
+    # These labels are equivalents only for this specific question. A generic
+    # substring rule would confuse a negative answer with a decline response.
+    if "veteran" in label and _normalize(value) == "no" and "I am not a protected veteran" in question.options:
+        value = "I am not a protected veteran"
     return FillAction(
         field_id=question.field_id,
         action="select" if question.input_type in {"select", "radio"} else "fill",
@@ -1640,52 +1648,36 @@ def _contains_any_label_word(label: str, words: tuple[str, ...]) -> bool:
 
 
 def _match_option(value: str, options: list[str]) -> str:
-    """Prefer an available option while keeping deterministic behavior."""
+    """Return a unique supported label, or leave the value for validation."""
     if not options:
         return value
-    wanted = _normalize(value)
-    for option in options:
-        if _normalize(option) == wanted:
-            return option
-    for option in options:
-        normalized = _normalize(option)
-        if wanted in normalized or normalized in wanted:
-            return option
-    if wanted == "no":
-        for option in options:
-            normalized = _normalize(option)
-            if (
-                normalized.startswith("no")
-                or "do not" in normalized
-                or "don't" in normalized
-                or "am not" in normalized
-            ):
-                return option
-    if wanted == "yes":
-        for option in options:
-            if _normalize(option).startswith("yes"):
-                return option
-    if wanted in {"decline to state", "prefer not to say", "prefer not to answer"}:
-        for option in options:
-            normalized = _normalize(option)
-            if any(
-                phrase in normalized
-                for phrase in (
-                    "decline",
-                    "prefer not",
-                    "do not wish",
-                    "don't wish",
-                    "choose not",
-                    "not wish to",
-                )
-            ):
-                return option
-    if wanted == "non-binary":
-        for option in options:
-            normalized = _normalize(option)
-            if normalized in {"non-binary", "nonbinary", "non binary"}:
-                return option
-    return value
+    return match_available_option(value, options).value or value
+
+
+def validate_action_options(question: FormQuestion, action: FillAction) -> FillAction:
+    """Reject impossible/ambiguous selections after facts or overrides resolve.
+
+    Empty option lists represent lazy-loaded controls; browser execution must
+    discover and verify those choices. Lists on a single-select action contain
+    equivalent candidates (for example Workday degree aliases), not many answers.
+    """
+    if action.action not in {"select", "select_many"} or not question.options:
+        return action
+    values = action.value if isinstance(action.value, list) else [str(action.value or "")]
+    if question.date_component == "month":
+        values = [month_name[int(value)] if value.isdigit() and 1 <= int(value) <= 12
+                  and not any(option == value for option in question.options) else value for value in values]
+    matches = [match_available_option(value, question.options) for value in values]
+    if action.action == "select":
+        resolved = list(dict.fromkeys(match.value for match in matches if match.value is not None))
+        if len(resolved) == 1:
+            return action.model_copy(update={"value": resolved[0]})
+    elif matches and all(match.value is not None for match in matches):
+        return action.model_copy(update={"value": list(dict.fromkeys(match.value for match in matches))})
+    return action.model_copy(update={
+        "action": "skip", "value": None,
+        "resolution_reason": "The saved answer does not map to a unique set of offered options. Choose an answer for this form.",
+    })
 
 
 def _match_state_option(value: str, options: list[str]) -> str:

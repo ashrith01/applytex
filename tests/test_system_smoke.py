@@ -215,5 +215,5 @@ def test_latex_session_lifecycle_smoke(tmp_path: Path) -> None:
         assert "applied" in rerender.json()
 
         deleted = client.delete(f"/latex/{session_id}")
-        assert deleted.status_code == 200
+        assert deleted.status_code == 204
         assert client.get(f"/latex/{session_id}/status").status_code == 404

@@ -13,6 +13,7 @@ PANEL_MODULE_FILES = (
     "panel-scan.js",
     "panel-fill.js",
     "panel-workday.js",
+    "panel-profile.js",
     "panel.js",
 )
 INJECT_FILES = ["providers.js", *PANEL_MODULE_FILES]
@@ -144,7 +145,8 @@ def test_extension_persists_one_flow_across_supported_navigation() -> None:
     assert "applicationStorageKey" in panel
     assert "capture_confidence" in panel
     assert "description_source" in panel
-    assert "submit your application|application form|attach resume|resume\\/cv|cover letter" in panel
+    assert "submit your application|application form|complete your application|review your application" in panel
+    assert "attach resume|resume\\/cv|cover letter" not in panel
 
 
 def test_extension_has_separate_autofill_and_tailor_tabs() -> None:
@@ -229,6 +231,60 @@ def test_extension_uses_proofing_ledger_hierarchy() -> None:
     assert "border-bottom: 1px solid #e5eae7;" in panel
     assert "width: 3px;" in panel
     assert "letter-spacing: 0;" in panel
+
+
+def test_extension_has_in_panel_profile_workspace_with_section_patches() -> None:
+    panel = panel_source()
+
+    assert "ApplyTexPanelProfile" in panel
+    assert 'data-action="open-autofill-information"' in panel
+    assert 'data-profile-workspace' in panel
+    assert 'data-profile-section="${item.id}"' in panel
+    assert "Personal" in panel
+    assert "Education" in panel
+    assert "Work experience" in panel
+    assert "Eligibility" in panel
+    assert "Equal employment" in panel
+    assert "Preferences & answers" in panel
+    assert "patchForSection" in panel
+    assert 'method: "PATCH"' in panel
+    assert "validateSection" in panel
+    assert "profileDirty" in panel
+    assert "Leave this section without saving" in panel
+    assert 'event.key !== "Escape"' in panel
+    assert 'returnAction === "account-profile"' in panel
+    assert "profile-add-record" in panel
+    assert "profile-remove-record" in panel
+    assert "profile-move-record" in panel
+    assert "Allow voluntary EEO autofill" in panel
+    assert "Save changes" in panel
+
+
+def test_extension_resume_row_opens_reviewed_profile_or_tailored_choices() -> None:
+    panel = panel_source()
+
+    assert "isResumeReviewItem" in panel
+    assert 'data-resume-workspace' in panel
+    assert "Use profile resume" in panel
+    assert "Tailor for this job" in panel
+    assert "Use tailored resume" in panel
+    assert 'prefer_approved_artifact: Boolean(preferApprovedArtifact)' in panel
+    assert 'data-action="manage-profile-resume"' in panel
+    assert "Resume upload stays reviewed" in panel
+    assert "requestSubmit" not in panel
+
+
+def test_extension_profile_workspace_is_compact_and_scrollable() -> None:
+    panel = panel_source()
+
+    assert "height: calc(100vh - 24px);" in panel
+    assert "grid-template-rows: auto auto minmax(0, 1fr) auto;" in panel
+    assert ".sja-workspace-scroll" in panel
+    assert "overflow-y: auto;" in panel
+    assert ".sja-profile-tabs" in panel
+    assert "overflow-x: auto;" in panel
+    assert "min-height: 32px;" in panel
+    assert "@media (max-width: 340px)" in panel
 
 
 def test_extension_distinguishes_filled_fields_from_ready_actions() -> None:
@@ -676,6 +732,51 @@ def test_extension_fill_supports_reviewed_radio_and_custom_selects() -> None:
     assert "selectCustomOption" in script
     assert "waitForOption" in script
     assert 'action.action === "upload"' in script
+
+
+def test_extension_set_native_value_avoids_illegal_invocation() -> None:
+    panel = panel_source()
+    fill = (EXTENSION / "panel-fill.js").read_text(encoding="utf-8")
+    for script in (panel, fill):
+        assert "Object.getPrototypeOf(element)" in script
+        assert "Object.getOwnPropertyDescriptor(proto, \"value\")" in script
+    assert 'failAction(\n          action,\n          "fill_threw"' in panel or '"fill_threw"' in panel
+    assert "} catch (error) {" in panel
+    fill_fn = panel.split("async function fillReviewedFields", 1)[1].split(
+        "\n  function valueForField",
+        1,
+    )[0]
+    assert '"fill_threw"' in fill_fn
+    assert "HTMLInputElement.prototype" not in fill_fn.split("const setNativeValue", 1)[1].split(
+        "const dispatch",
+        1,
+    )[0]
+    assert "element._valueTracker" in fill_fn or "_valueTracker" in fill_fn
+    assert "dataset.smartjobapplyFieldId === wanted" in panel
+    assert 'Prefer the control tagged during scan' in panel or "tagged during scan" in panel
+
+
+def test_extension_job_details_page_does_not_pretend_to_scan_fields() -> None:
+    panel = panel_source()
+    providers = (EXTENSION / "providers.js").read_text(encoding="utf-8")
+    smartrecruiters = providers.split("smartrecruiters:", 1)[1].split("workable:", 1)[0]
+
+    assert "Open the application form to scan fields" in panel
+    assert "This job details page has no application inputs" in panel
+    assert "Waiting for application fields on this step" in panel
+    assert "if (!isApplicationLikePage()) return false;" in panel
+    assert "cleanCapturedCompany" in panel
+    assert "cleanCapturedJobTitle" in panel
+    assert "isCaptureNoiseText" in panel
+    assert "titleFromJobUrl" in panel
+    assert "internet explorer" in panel
+    assert '"header"' not in smartrecruiters
+    assert "[class*='company' i]" not in smartrecruiters
+    assert "submit your application" in panel
+    assert "attach resume|resume\\/cv|cover letter" not in panel
+    # Prefer specific title selectors ahead of a bare h1 (IE11 banners often use h1).
+    title_block = smartrecruiters.split("title:", 1)[1].split("company:", 1)[0]
+    assert title_block.index("[data-testid='job-title']") < title_block.index('"h1"')
 
 
 def test_extension_matches_state_names_and_postal_codes() -> None:
