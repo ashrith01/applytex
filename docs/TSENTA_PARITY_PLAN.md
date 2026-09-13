@@ -205,10 +205,20 @@ leaves no receipt is worse than the current extension.
    (owner decision, 2026-09-13: frontend UI work is deferred).
 4. Add a `browser-qa` CI job running `scripts/autofill_lab_qa.mjs` headless.
 
-### Phase 1 — Shrink the unresolved count (3–4 days)
+### Phase 1 — Shrink the unresolved count (3–4 days) — **implemented 2026-09-13**
 
 Persona-agreed highest-value fix. Turns the fill from "70% then I type" into
 "review and continue".
+
+Implementation notes: `profile_answers` table + `SavedAnswer` model;
+`resolve_form_questions(saved_answers=…)` consults the bank only where profile
+facts could not answer; `remember_answer()` routes typed booleans to profile
+facts; `POST /extension/forms/{scan}/plan` gained `remember`; new
+`/answers/propose` and `/answers/used` routes; `/profile/answers` CRUD; panel
+gained "Suggest answers from saved facts", per-suggestion "Use and remember /
+Use once", and a remember prompt on one-off answers. Item 4 (lazy selects) was
+found already safe: the browser's `uniqueOption` refuses ambiguous matches.
+The frontend answers-bank page (item 5) is deferred with the rest of the UI.
 
 1. **Answers bank table.** `profile_answers(profile_id, intent, prompt_text,
    normalized_prompt, value, aliases[], source ∈ {user, resolved, llm_reviewed},

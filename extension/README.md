@@ -43,6 +43,26 @@ a rescan. Text answers cannot satisfy attachment fields or replace file uploads.
 Full cover-letter generation, export, and durable attachment snapshots remain
 planned in [`docs/JOBRIGHT_PARITY_PLAN.md`](../docs/JOBRIGHT_PARITY_PLAN.md).
 
+## Answers that learn
+
+Unresolved required questions no longer stay unresolved forever:
+
+- **Answer once for this form** now asks whether to remember the answer. A
+  remembered yes/no for age, relocation, travel, non-compete, authorization,
+  or sponsorship becomes the matching profile fact; anything else is stored in
+  the answers bank (`GET/POST/DELETE /profile/answers`) with its intent and the
+  exact prompt, and resolves the same question on the next form (exact prompt,
+  learned alias, intent, then token match). Profile facts always win over a
+  remembered answer, so editing the profile takes effect everywhere.
+- **Suggest answers from saved facts** asks the configured LLM to map the
+  remaining short required questions onto facts you already saved — nothing
+  else. Each suggestion shows the fact it cites; **Use and remember** or
+  **Use once** fills it through the same reviewed plan override, and a
+  suggestion that does not match an offered option or cite a real fact is
+  discarded server-side. Authorization, sponsorship, compensation, demographic,
+  narrative, file, and per-record questions are never sent to the model.
+- Usage counts in the bank reflect fields that were actually filled.
+
 Existing page answers are preserved by default. Select **Replace existing answers
 with profile values on this fill** to review replacements; this choice resets
 after filling or when the form structure changes. Empty dropdown placeholders
