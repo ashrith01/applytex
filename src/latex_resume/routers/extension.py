@@ -216,10 +216,13 @@ async def preview_resume_customization(
     request: Request,
     body: ResumeCustomizationPreviewRequest,
     profile_id: str | None = None,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
 ) -> ResumeCustomizationPreviewResponse:
     """Return fast local skill confirmation candidates before customization."""
-    resolved_profile_id = (
-        profile_id or request.app.state.application_store.get_active_profile_id()
+    resolved_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=profile_id,
     )
     profile = request.app.state.application_store.get_candidate_profile(resolved_profile_id)
     if not body.job_description.strip():
