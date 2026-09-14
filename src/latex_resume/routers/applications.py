@@ -25,6 +25,7 @@ from latex_resume.application_store import InvalidApplicationTransition
 from latex_resume.cover_letters import (
     approve_cover_letter,
     artifact_file_payload,
+    create_cover_letter_from_text,
     generate_cover_letter,
     letter_summary,
     resume_text_for_application,
@@ -77,6 +78,12 @@ class CoverLetterResponse(BaseModel):
 
 class CoverLetterTextRequest(BaseModel):
     text: str = Field(min_length=1, max_length=6000)
+
+
+class CoverLetterDraftRequest(BaseModel):
+    # When provided, the letter is the user's own text (validated, no model call).
+    text: str | None = Field(default=None, max_length=6000)
+    profile_id: str | None = None
 
 
 class ArtifactFileResponse(BaseModel):
@@ -425,23 +432,34 @@ def _require_cover_letter(request: Request, application_id: str, artifact_id: st
 async def draft_cover_letter(
     request: Request,
     application_id: str,
+    body: CoverLetterDraftRequest | None = None,
     x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
     profile_id: str | None = None,
 ) -> CoverLetterResponse:
-    """Draft a job-specific letter grounded in the tailored (or profile) resume and the JD."""
+    """Draft a job-specific letter grounded in the resume and the JD, or store the user's own text."""
+    body = body or CoverLetterDraftRequest()
     scoped_profile_id = resolve_request_profile_id(
         request=request,
         x_profile_id=x_profile_id,
-        profile_id=profile_id,
+        profile_id=profile_id or body.profile_id,
     )
     application, job, profile = _cover_letter_context(request, application_id, scoped_profile_id)
     try:
-        artifact = await generate_cover_letter(
-            request.app.state.application_store,
-            application=application,
-            job=job,
-            profile=profile,
-        )
+        if body.text and body.text.strip():
+            artifact = create_cover_letter_from_text(
+                request.app.state.application_store,
+                application=application,
+                job=job,
+                profile=profile,
+                text=body.text,
+            )
+        else:
+            artifact = await generate_cover_letter(
+                request.app.state.application_store,
+                application=application,
+                job=job,
+                profile=profile,
+            )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:

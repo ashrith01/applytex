@@ -390,3 +390,24 @@ def test_cover_letter_latex_escapes_and_structures() -> None:
     latex = cover_letter_latex("First paragraph with 50% and #tags.\n\nSecond paragraph.", profile=profile, application=application)
     assert r"Avery \& Co" in latex and r"Acme 100\% Robotics" in latex and r"ML\_Engineer" in latex
     assert r"50\% and \#tags" in latex and latex.count("\n\n") >= 1 and r"\end{document}" in latex
+
+
+def test_cover_letter_from_user_text_skips_the_model_but_not_the_validator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ApplicationStore(tmp_path / "letter-text.db")
+    _job(store)
+    profile = store.get_candidate_profile("default")
+    profile.resume_latex_source = SAMPLE_TEX.read_text(encoding="utf-8")
+    store.save_candidate_profile(profile)
+
+    async def explode(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("no model call for user-written text")
+
+    monkeypatch.setattr(cover_letters, "complete_json", explode)
+    with TestClient(create_app(application_store=store)) as client:
+        application_id = client.post("/applications", json={"job_id": "job-1"}).json()["application_id"]
+        rejected = client.post(f"/applications/{application_id}/cover-letter", json={"text": GOOD_LETTER + " I grew revenue by 500%."})
+        assert rejected.status_code == 409 and "500%" in rejected.json()["detail"]
+        created = client.post(f"/applications/{application_id}/cover-letter", json={"text": GOOD_LETTER})
+        assert created.status_code == 200, created.text
+        assert created.json()["artifact"]["evidence_notes"] == ["Written by the candidate."]
+        assert created.json()["artifact"]["status"] == "generated"
