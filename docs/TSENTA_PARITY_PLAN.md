@@ -380,9 +380,16 @@ auth on; bearer tokens persist hashed in `auth_sessions` with TTL and
 `POST /auth/logout`; password rotation needs proof of ownership; rate limits
 key per profile; `GET /profile/export` and `DELETE /profile` (typed
 confirmation); `schema_migrations` table + runner; the 57 wire models moved
-from `api.py` to `schemas.py`. Remaining for 5b: extension options page
-(configurable API base + token), classic-session port to SQLite, per-profile
-LLM keys/budgets, encryption at rest for EEO/compensation, Web Store packaging.
+from `api.py` to `schemas.py`. **5b implemented 2026-09-14:** `data_protection.py` (Fernet, `APPLYTEX_DATA_KEY`)
+seals EEO, compensation, LLM keys and EEO receipt values at rest; `LLMSettings`
+on the profile with `GET/PUT /profile/llm` and `/profile/llm/usage`, a
+request-scoped `ProfileLLMContext` in `llm.py` that overrides backend/key/model
+and enforces daily budgets (429); classic `/latex/*` sessions persist in
+`latex_sessions` and survive restarts; the extension gains an Options page
+(configurable API and web-app origins, https required off-localhost, optional
+host permission requested on save, Test connection, sign out) and
+`scripts/package_extension.mjs` builds the Web Store zip. Not done: hosted
+identity (OIDC), MFA, Postgres.
 
 1. Auth required by default; drop trust in `X-Profile-Id` when a token is
    present; scope `GET /jobs/{id}` and empty-`profile_id` tailor sessions.

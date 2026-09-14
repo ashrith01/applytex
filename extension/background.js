@@ -1,6 +1,30 @@
 importScripts("providers.js");
 
-const API_BASE = "http://127.0.0.1:8000";
+const DEFAULT_API_BASE = "http://127.0.0.1:8000";
+const API_BASE_KEY = "applytexApiBase";
+let apiBaseCache = null;
+
+// The API origin is configurable from the options page (self-hosted API).
+async function apiBase() {
+  if (apiBaseCache) return apiBaseCache;
+  const stored = await chrome.storage.local.get([API_BASE_KEY]);
+  apiBaseCache = normalizeOrigin(stored[API_BASE_KEY]) || DEFAULT_API_BASE;
+  return apiBaseCache;
+}
+
+function normalizeOrigin(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[API_BASE_KEY]) apiBaseCache = null;
+});
 const PANEL_TABS_KEY = "applytexPanelTabs";
 
 void restoreOpenPanels();
@@ -78,9 +102,11 @@ async function setPanelTabOpen(tabId, open) {
 }
 
 async function proxyApiRequest(message) {
-  const url = new URL(String(message.path || ""), API_BASE);
-  if (url.origin !== API_BASE || !url.pathname.startsWith("/")) {
-    return { ok: false, status: 400, error: "Invalid local API path." };
+  // The options page may probe a candidate origin before saving it.
+  const base = normalizeOrigin(message.apiBaseOverride) || await apiBase();
+  const url = new URL(String(message.path || ""), base);
+  if (url.origin !== base || !url.pathname.startsWith("/")) {
+    return { ok: false, status: 400, error: "Invalid API path." };
   }
   const options = message.options || {};
   const method = String(options.method || "GET").toUpperCase();

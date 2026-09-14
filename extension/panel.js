@@ -23,7 +23,8 @@
   const US_STATE_CODES = shared.US_STATE_CODES || new Set(Object.values(US_STATE_CODE_BY_NAME));
   const PROFILE_STORAGE_KEY = "applytexExtensionProfileId";
   const TOKEN_STORAGE_KEY = "applytexExtensionAccessToken";
-  const WEB_APP_BASE = "http://localhost:3000";
+  const WEB_APP_BASE_KEY = "applytexWebAppBase";
+  let WEB_APP_BASE = "http://localhost:3000";
   const state = {
     provider: providerForUrl(location.href),
     flowKey: workflowKeyForUrl(location.href, providerForUrl(location.href)),
@@ -126,7 +127,11 @@
       "applicationByJob",
       PROFILE_STORAGE_KEY,
       TOKEN_STORAGE_KEY,
+      WEB_APP_BASE_KEY,
     ]);
+    if (typeof saved[WEB_APP_BASE_KEY] === "string" && /^https?:\/\/[^/]+$/.test(saved[WEB_APP_BASE_KEY])) {
+      WEB_APP_BASE = saved[WEB_APP_BASE_KEY];
+    }
     try {
       await apiRequest("/health");
       state.backendReady = true;
@@ -1333,8 +1338,8 @@
     params.set("return", "extension");
     const jobId = state.job?.job_id;
     const url = jobId
-      ? `http://localhost:3000/tailor/${encodeURIComponent(jobId)}?${params.toString()}`
-      : `http://localhost:3000/jobs?${params.toString()}`;
+      ? `${WEB_APP_BASE}/tailor/${encodeURIComponent(jobId)}?${params.toString()}`
+      : `${WEB_APP_BASE}/jobs?${params.toString()}`;
     window.open(url, "_blank", "noopener,noreferrer");
     state.message = "Opened the guided resume customization flow in the web UI.";
     render();
@@ -2627,7 +2632,7 @@
     root.querySelectorAll("[data-action='open-profile']").forEach((button) => {
       button.addEventListener("pointerup", () => {
         void createMissingAnswerTask(button.dataset.question || "Application question");
-        window.open("http://localhost:3000/profile#questions", "_blank", "noopener,noreferrer");
+        window.open(`${WEB_APP_BASE}/profile#questions`, "_blank", "noopener,noreferrer");
       });
     });
     root.querySelectorAll("[data-action='plan-override']").forEach((button) => {

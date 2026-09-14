@@ -64,6 +64,28 @@ survive API restarts, expire after `APPLYTEX_TOKEN_TTL_HOURS` (default 336 =
   profile, revokes its tokens and password, and clears it as the active
   profile. The typed confirmation is the only safeguard; there is no undo.
 
+## Encryption at rest
+
+Set `APPLYTEX_DATA_KEY` (generate one with
+`uv run python -m latex_resume.data_protection`) and the store seals the
+sensitive sub-documents before they reach SQLite: voluntary EEO answers,
+compensation expectations, per-profile LLM API keys, and EEO values inside
+submission receipts. Everything else stays plain JSON so the database remains
+inspectable. Rows written before the key was set still read; rows written
+with a key cannot be read without it (a clear error, never silent garbage).
+The API logs a warning when auth is required but no key is set.
+
+## Per-profile LLM keys and budgets
+
+`PUT /profile/llm` stores a backend, API key, model, and daily call/token
+budgets on the acting profile. For that profile's requests the key and
+backend override the server-wide `.env` values (an explicit per-call
+override, such as the application-answer fallback chain, still wins). The key
+is never returned — `GET /profile/llm` shows a masked tail — and is excluded
+from exports. `GET /profile/llm/usage` reports today's calls and tokens; once
+a budget is reached, model-backed routes answer **429** and the model is not
+called. Usage is per profile per UTC day in `llm_usage`.
+
 ## Schema changes
 
 `ApplicationStore` creates tables idempotently and then applies numbered

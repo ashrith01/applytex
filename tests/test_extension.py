@@ -95,7 +95,8 @@ def test_extension_fills_only_after_review_and_never_submits() -> None:
     assert "/extension/jobs/capture" in script
     assert "/extension/resume/customization-preview" in script
     assert "openWebCustomization" in script
-    assert "http://localhost:3000/" in script
+    assert 'let WEB_APP_BASE = "http://localhost:3000"' in script
+    assert "${WEB_APP_BASE}/" in script
     assert "window.open" in script
     assert "fillReviewedFields" in script
     assert "Autofill reviewed fields" in script
