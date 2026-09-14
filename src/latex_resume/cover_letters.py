@@ -152,6 +152,39 @@ async def generate_cover_letter(
     return store.save_application_artifact(artifact)
 
 
+def create_cover_letter_from_text(
+    store: ApplicationStore,
+    *,
+    application: ApplicationRecord,
+    job: JobPosting,
+    profile: CandidateProfile,
+    text: str,
+) -> ApplicationArtifact:
+    """Store a letter the user wrote themselves; the same grounding validator applies."""
+    resume_text, resume_artifact_id = resume_text_for_application(store, application, profile)
+    errors = validate_letter(text, resume_text=resume_text, job_description=job.description)
+    if errors:
+        raise ValueError("Cover letter rejected: " + "; ".join(errors))
+    now = utc_now()
+    return store.save_application_artifact(
+        ApplicationArtifact(
+            artifact_id=str(uuid.uuid4()),
+            application_id=application.application_id,
+            job_id=application.job_id,
+            profile_id=profile.profile_id,
+            type=ApplicationArtifactType.COVER_LETTER,
+            status=ApplicationArtifactStatus.GENERATED,
+            filename=_letter_filename(application, "txt"),
+            mime_type="text/plain",
+            text_content=text.strip(),
+            evidence_notes=["Written by the candidate."],
+            source_tailor_session_id=resume_artifact_id,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
 def update_cover_letter_text(
     store: ApplicationStore,
     artifact: ApplicationArtifact,

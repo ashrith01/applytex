@@ -12,7 +12,10 @@ from typing import Any, Literal
 
 from latex_resume.job_models import (
     ALLOWED_APPLICATION_TRANSITIONS,
+    APPLY_RUN_TRANSITIONS,
     ApplicationArtifact,
+    ApplyRun,
+    ApplyRunLogEntry,
     ApplicationArtifactStatus,
     ApplicationArtifactType,
     ApplicationDetail,
@@ -33,6 +36,10 @@ from latex_resume.job_models import (
     WatchlistEntry,
     utc_now,
 )
+
+
+class InvalidApplyRunTransition(ValueError):
+    """Raised when a run is moved to a status the executor/user protocol forbids."""
 
 
 class InvalidApplicationTransition(ValueError):
@@ -272,6 +279,16 @@ class ApplicationStore:
                     profile_id TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     started_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS apply_runs (
+                    run_id TEXT PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS submission_bundles (
@@ -1173,6 +1190,105 @@ class ApplicationStore:
                 (application_id, max(1, limit)),
             ).fetchall()
         return [FormScan.model_validate_json(row["payload_json"]) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Executor runs
+    # ------------------------------------------------------------------
+
+    def create_apply_run(self, run: ApplyRun) -> ApplyRun:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO apply_runs
+                    (run_id, application_id, profile_id, status, payload_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (run.run_id, run.application_id, run.profile_id, run.status, run.model_dump_json(), run.created_at, run.updated_at),
+            )
+        return run
+
+    def get_apply_run(self, run_id: str) -> ApplyRun | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload_json FROM apply_runs WHERE run_id = ?", (run_id,)).fetchone()
+        return ApplyRun.model_validate_json(row["payload_json"]) if row else None
+
+    def list_apply_runs(
+        self,
+        profile_id: str,
+        *,
+        statuses: list[str] | None = None,
+        application_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ApplyRun]:
+        clauses = ["profile_id = ?"]
+        params: list[object] = [profile_id]
+        if statuses:
+            clauses.append(f"status IN ({','.join('?' for _ in statuses)})")
+            params.extend(statuses)
+        if application_id:
+            clauses.append("application_id = ?")
+            params.append(application_id)
+        params.append(max(1, limit))
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT payload_json FROM apply_runs WHERE {' AND '.join(clauses)} ORDER BY created_at ASC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        return [ApplyRun.model_validate_json(row["payload_json"]) for row in rows]
+
+    def count_apply_runs_since(self, profile_id: str, since: str) -> int:
+        """Runs created since ``since`` that were not cancelled — the daily-cap counter."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM apply_runs WHERE profile_id = ? AND created_at >= ? AND status != 'cancelled'",
+                (profile_id, since),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def transition_apply_run(
+        self,
+        run_id: str,
+        target: str,
+        *,
+        actor: str,
+        updates: dict[str, Any] | None = None,
+        log_message: str = "",
+        log_level: str = "info",
+        expected_status: str | None = None,
+    ) -> ApplyRun:
+        """Move a run along the executor/user protocol; ``running -> running`` is a progress update."""
+        run = self.get_apply_run(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run_id: {run_id}")
+        if expected_status is not None and run.status != expected_status:
+            raise InvalidApplyRunTransition(
+                f"Run is {run.status}, expected {expected_status}."
+            )
+        allowed = APPLY_RUN_TRANSITIONS.get(run.status, {})
+        if target not in allowed:
+            raise InvalidApplyRunTransition(f"Cannot move run from {run.status} to {target}.")
+        if allowed[target] != actor:
+            raise InvalidApplyRunTransition(
+                f"Only the {allowed[target]} may move a run from {run.status} to {target}."
+            )
+        now = utc_now()
+        merged: dict[str, Any] = {**(updates or {}), "status": target, "updated_at": now}
+        if target == "running" and run.started_at is None:
+            merged["started_at"] = now
+        if target in {"submitted", "needs_verification", "failed", "cancelled"}:
+            merged["finished_at"] = now
+        if log_message:
+            merged["step_log"] = [
+                *run.step_log,
+                ApplyRunLogEntry(level=log_level, message=log_message[:1000]),  # type: ignore[arg-type]
+            ][-200:]
+        updated = run.model_copy(update=merged)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE apply_runs SET status = ?, payload_json = ?, updated_at = ? WHERE run_id = ?",
+                (updated.status, updated.model_dump_json(), updated.updated_at, run_id),
+            )
+        return updated
 
     # ------------------------------------------------------------------
     # Submission receipts (insert-only)
