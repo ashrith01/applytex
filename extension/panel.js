@@ -48,6 +48,8 @@
     answerDrafts: {},
     automaticAnswerStatus: {},
     generatedAnswerFields: {},
+    // Review-gated short-answer suggestions for the current scan: { scanId, items: { fieldId: proposal } }.
+    answerProposals: null,
     lastFillResult: null,
     resumeInfo: null,
     preview: null,
@@ -795,9 +797,11 @@
     if (!state.plan) return;
     const run = beginAutofillRun(state.plan.actions || []);
     await withBusy("Filling reviewed fields", async () => {
-      const result = await fillReviewedFields(state.plan.actions, run);
+      const filledActions = state.plan.actions;
+      const result = await fillReviewedFields(filledActions, run);
       state.lastFillResult = result;
       state.replaceExisting = false;
+      await recordRememberedAnswersUsed(filledActions, result);
       await rescanAndPlan();
       finishAutofillRun(run);
       state.message = run.cancelled
@@ -842,6 +846,80 @@
 
   function actionableAutofillActions(actions) {
     return (actions || []).filter((action) => !["skip", "upload"].includes(action.action) && action.value !== null);
+  }
+
+  // Usage counts in the answers bank reflect fills that actually happened, not plans.
+  async function recordRememberedAnswersUsed(actions, result) {
+    if (!state.scan?.scan_id) return;
+    const failed = new Set((result?.failed_values || []).map((item) => item.field_id).filter(Boolean));
+    const fieldIds = (actions || [])
+      .filter((action) => action.saved_answer_id && !failed.has(action.field_id))
+      .map((action) => action.field_id);
+    if (!fieldIds.length) return;
+    try {
+      await apiRequest(`/extension/forms/${state.scan.scan_id}/answers/used`, {
+        method: "POST",
+        body: JSON.stringify({ field_ids: fieldIds, profile_id: state.profileId }),
+      });
+    } catch {
+      // Usage bookkeeping never blocks a fill.
+    }
+  }
+
+  function currentAnswerProposals() {
+    if (!state.answerProposals || state.answerProposals.scanId !== state.scan?.scan_id) return {};
+    return state.answerProposals.items || {};
+  }
+
+  function proposalEligibleItems() {
+    return (state.plan?.review_items || []).filter((item) => item.proposal_eligible === true && item.status !== "ready");
+  }
+
+  async function proposeAnswers() {
+    if (!state.scan?.scan_id) return;
+    const eligible = proposalEligibleItems();
+    if (!eligible.length) return;
+    await withBusy("Suggesting answers from your saved facts", async () => {
+      const response = await apiRequest(`/extension/forms/${state.scan.scan_id}/answers/propose`, {
+        method: "POST",
+        body: JSON.stringify({ field_ids: eligible.map((item) => item.field_id), profile_id: state.profileId }),
+      });
+      const items = {};
+      (response.proposals || []).forEach((proposal) => { items[proposal.field_id] = proposal; });
+      state.answerProposals = { scanId: state.scan.scan_id, items };
+      const suggested = Object.values(items).filter((proposal) => proposal.value !== null && proposal.value !== undefined).length;
+      state.message = suggested
+        ? `${suggested} suggestion${suggested === 1 ? "" : "s"} ready. Each one cites the saved fact it came from; confirm before it is filled.`
+        : "No saved fact answers the remaining questions. Answer once or add the fact to your profile.";
+    });
+  }
+
+  async function applyAnswerProposal(fieldId, remember) {
+    const proposal = currentAnswerProposals()[fieldId];
+    if (!proposal || proposal.value === null || proposal.value === undefined || !state.scan?.scan_id) return;
+    await withBusy(remember ? "Saving answer to your profile" : "Using suggestion once", async () => {
+      const plan = await apiRequest(`/extension/forms/${state.scan.scan_id}/plan`, {
+        method: "POST",
+        body: JSON.stringify({
+          overrides: { [fieldId]: proposal.value },
+          profile_id: state.profileId,
+          remember,
+        }),
+      });
+      state.plan = plan;
+      if (state.answerProposals?.items) delete state.answerProposals.items[fieldId];
+      state.message = remember
+        ? (proposal.remember_target === "profile_fact"
+          ? "Saved as a profile fact. Future forms resolve this automatically."
+          : "Remembered in your answers bank. Future forms resolve this automatically.")
+        : "Suggestion used for this form only.";
+    });
+  }
+
+  function formatProposalValue(value) {
+    if (Array.isArray(value)) return value.join(", ");
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return String(value ?? "");
   }
 
   function beginAutofillRun(actions, currentLabel = "Starting autofill") {
@@ -1441,6 +1519,9 @@
           ? renderAutofillProgress()
           : `<button data-action="autofill" type="button" ${canAutofill && !contextBlocksAutofill ? "" : "disabled"}>${workdayExperience ? "Approve and fill My Experience" : "Autofill reviewed fields"}</button>`}
         ${state.plan?.unresolved_required?.length && !workdayExperience ? `<p class="sja-note">Unresolved required answers stay skipped (${state.plan.unresolved_required.length}). Ready actions: ${state.plan.ready_action_count || 0}.</p>` : ""}
+        ${!workdayExperience && proposalEligibleItems().length && !state.autofillProgress?.active
+          ? `<button class="sja-secondary-button" data-action="propose-answers" type="button" ${state.busy ? "disabled" : ""}>Suggest answers from saved facts (${proposalEligibleItems().length})</button>`
+          : ""}
         <p class="sja-safety-note">Final submission stays manual.</p>
         <div class="sja-field-list">${renderReviewChecklist()}</div>
         ${renderLastFillResult()}
@@ -1714,12 +1795,19 @@
     const automaticStatus = statusRecord?.label === item.label ? statusRecord.state : "";
     const generated = state.generatedAnswerFields[item.field_id] === item.label;
     const showManualFallback = stateInfo.className === "blocked" && (!generatable || automaticStatus === "failed");
+    const proposal = stateInfo.className === "blocked" ? currentAnswerProposals()[item.field_id] : null;
+    const hasProposal = Boolean(proposal && proposal.value !== null && proposal.value !== undefined);
     return `
       <div class="sja-question-row ${stateInfo.className}">
         <span class="sja-question-mark" aria-hidden="true">${escapeHtml(stateInfo.symbol)}</span>
         <div>
           <strong>${escapeHtml(label)} <small class="sja-question-requirement">${item.required ? "required" : "optional"}</small></strong>
           ${detail ? `<span>${escapeHtml(detail)}</span>` : ""}
+          ${hasProposal ? `
+            <span class="sja-proposal">Suggested: <b>${escapeHtml(formatProposalValue(proposal.value))}</b>${proposal.evidence ? ` · from ${escapeHtml(proposal.evidence)}` : ""}${proposal.confidence !== "high" ? ` · ${escapeHtml(proposal.confidence)} confidence` : ""}</span>
+            <button class="sja-inline-action" data-action="apply-proposal" data-field-id="${escapeAttr(item.field_id)}" data-remember="1" type="button">${proposal.remember_target === "profile_fact" ? "Use and save to profile" : "Use and remember"}</button>
+            <button class="sja-inline-action" data-action="apply-proposal" data-field-id="${escapeAttr(item.field_id)}" data-remember="0" type="button">Use once</button>
+          ` : proposal && proposal.reason ? `<span class="sja-proposal sja-muted">${escapeHtml(proposal.reason)}</span>` : ""}
           ${showManualFallback && item.required ? `<button class="sja-inline-action" data-action="open-profile" data-question="${escapeAttr(label)}" type="button">Add answer to Profile</button>` : ""}
           ${showManualFallback ? `<button class="sja-inline-action" data-action="plan-override" data-field-id="${escapeAttr(item.field_id)}" data-question="${escapeAttr(label)}" type="button">Answer once for this form</button>` : ""}
           ${generated ? `<button class="sja-inline-action" data-action="edit-generated-answer" data-field-id="${escapeAttr(item.field_id)}" type="button">Edit draft</button>` : ""}
@@ -2297,19 +2385,33 @@
         void withBusy("Saving one-off answer", async () => {
           const fieldId = button.dataset.fieldId;
           if (!fieldId || !state.scan?.scan_id) return;
-          const value = window.prompt(`Answer once for: ${button.dataset.question || fieldId}`, "");
+          const value = window.prompt(`Answer for: ${button.dataset.question || fieldId}`, "");
           if (!value || !value.trim()) return;
+          // Remembering writes the answer to the profile (typed facts) or the
+          // answers bank so the next form resolves it without asking again.
+          const remember = window.confirm("Remember this answer for future application forms?\n\nOK = remember · Cancel = use once for this form");
           const plan = await apiRequest(`/extension/forms/${state.scan.scan_id}/plan`, {
             method: "POST",
             body: JSON.stringify({
               overrides: { [fieldId]: value.trim() },
               profile_id: state.profileId,
+              remember,
             }),
           });
           state.plan = plan;
-          state.message = "One-off answer saved for this form plan.";
+          state.message = remember
+            ? "Answer remembered. Future forms with this question resolve automatically."
+            : "One-off answer saved for this form plan.";
           render();
         });
+      });
+    });
+    root.querySelector("[data-action='propose-answers']")?.addEventListener("pointerup", () => {
+      void proposeAnswers();
+    });
+    root.querySelectorAll("[data-action='apply-proposal']").forEach((button) => {
+      button.addEventListener("pointerup", () => {
+        void applyAnswerProposal(button.dataset.fieldId || "", button.dataset.remember === "1");
       });
     });
     root.querySelectorAll("[data-action='edit-generated-answer']").forEach((button) => {
@@ -3229,6 +3331,12 @@
       #smartjobapply-panel .sja-question-row.blocked .sja-question-mark {
         background: transparent;
         color: #a96519;
+      }
+      #smartjobapply-panel .sja-proposal {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        line-height: 1.4;
       }
       #smartjobapply-panel .sja-inline-action {
         width: auto;

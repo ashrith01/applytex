@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from latex_resume.api import (
     ProfileSetupResponse,
     ProfileView,
     ProjectSyncResponse,
+    SavedAnswerListResponse,
+    SavedAnswerUpsertRequest,
     SetActiveProfileRequest,
     _deep_merge_profile_dict,
     _profile_has_pdf,
@@ -32,11 +35,12 @@ from latex_resume.api import (
     _render_profile_latex_to_pdf,
 )
 from latex_resume.artifact_files import persist_b64_pdf
-from latex_resume.form_resolution import profile_setup_status
+from latex_resume.form_resolution import normalize_answer_prompt, profile_setup_status
 from latex_resume.job_models import (
     CandidateProfile,
     ProjectRecord,
     ProjectSource,
+    SavedAnswer,
     utc_now,
 )
 from latex_resume.local_auth import auth_required
@@ -163,6 +167,66 @@ async def get_profile_setup_questions(
         missing_required=missing_required,
         ready_for_basic_autofill=not missing_required,
     )
+
+
+@router.get("/profile/answers", response_model=SavedAnswerListResponse)
+async def list_profile_answers(
+    request: Request,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+    profile_id: str | None = None,
+) -> SavedAnswerListResponse:
+    """Return the answers bank: reviewed answers remembered from earlier forms."""
+    scoped_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=profile_id,
+    )
+    return SavedAnswerListResponse(
+        answers=request.app.state.application_store.list_profile_answers(scoped_profile_id)
+    )
+
+
+@router.post("/profile/answers", response_model=SavedAnswer)
+async def upsert_profile_answer(
+    request: Request,
+    body: SavedAnswerUpsertRequest,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+    profile_id: str | None = None,
+) -> SavedAnswer:
+    """Add or replace a remembered answer by its prompt text."""
+    scoped_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=profile_id,
+    )
+    answer = SavedAnswer(
+        answer_id=str(uuid.uuid4()),
+        profile_id=scoped_profile_id,
+        intent=body.intent,
+        prompt_text=body.prompt_text.strip(),
+        normalized_prompt=normalize_answer_prompt(body.prompt_text),
+        value=body.value,
+        aliases=[alias.strip() for alias in body.aliases if alias.strip()],
+        source="user",
+        ats_provider=body.ats_provider,
+    )
+    return request.app.state.application_store.upsert_profile_answer(answer)
+
+
+@router.delete("/profile/answers/{answer_id}", status_code=204)
+async def delete_profile_answer(
+    request: Request,
+    answer_id: str,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+    profile_id: str | None = None,
+) -> None:
+    scoped_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=profile_id,
+    )
+    if not request.app.state.application_store.delete_profile_answer(scoped_profile_id, answer_id):
+        raise HTTPException(404, f"Answer '{answer_id}' not found.")
 
 
 @router.get("/profile/projects", response_model=list[ProjectRecord])

@@ -173,6 +173,8 @@ uv run python -m latex_resume.engine samples/sample_resume.tex
 | `APPLYTEX_DB_PATH` | `.applytex/applytex.db` | SQLite database path (must be writable at startup) |
 | `APPLYTEX_REQUIRE_AUTH` | `0` | Set to `1` to require bearer-token auth on all API routes |
 | `APPLYTEX_LOG_FORMAT` | `console` | Log format: `console` (coloured key=value) or `json` (for log pipelines) |
+| `APPLYTEX_WATCHLIST_REFRESH_MINUTES` | `180` | Scheduled watchlist refresh cadence; `0` disables the loop |
+| `APPLYTEX_WATCHLIST_STRICT` | `1` | Only feed jobs matching saved role/location preferences |
 | `LOG_LEVEL` | `info` | Log level: `debug` \| `info` \| `warning` \| `error` |
 | `HOST` | `127.0.0.1` | API bind address |
 | `PORT` | `8000` | API bind port |
@@ -219,6 +221,28 @@ when an API key is configured and Codex fails.
 
 Use `gpt-5.4-mini` for faster lightweight Codex tasks. See
 [Model routing](docs/MODEL_ROUTING.md) for the recommended local M4/16 GB route.
+
+## Watchlist Feed
+
+Follow a curated set of employer boards and let the API refresh them on a
+schedule instead of searching one board at a time:
+
+```bash
+uv run applytex-watchlist seed --domain robotics --domain autonomous_driving --domain llm
+uv run applytex-watchlist refresh
+uv run applytex-watchlist feed --since 24h --min-fit 60
+uv run applytex-watchlist feed --markdown auto     # .applytex/feed/<date>.md
+```
+
+The bundled seed is ~100 Greenhouse / Lever / Ashby boards verified live
+against the public APIs and tagged by domain. Each refresh keeps only postings
+that match the profile's saved role and location preferences
+(`APPLYTEX_WATCHLIST_STRICT=0` keeps everything), scores them against the
+profile resume, and preserves `first_seen_at` so `since` windows are stable.
+The API runs the same refresh every `APPLYTEX_WATCHLIST_REFRESH_MINUTES`
+(default 180, `0` disables) and serves `GET /jobs/feed?since=24h`.
+Companies without a public board API (for example Aurora, Applied Intuition,
+Boston Dynamics) remain capture-only through the extension.
 
 ## Job Discovery API
 
@@ -271,6 +295,11 @@ Full interactive docs at `http://localhost:8000/docs` when the API is running.
 | `POST` | `/tailor/sessions/{id}/approve` | Approve and persist the tailored PDF |
 | `POST` | `/jobs/search` | Search Greenhouse, Lever, or Ashby boards |
 | `GET` | `/jobs` | List captured jobs |
+| `GET` | `/jobs/feed` | Ranked watchlist matches (`since=24h`, `min_fit`, `domain`) |
+| `GET/POST` | `/watchlist` | List or add followed boards; `POST /watchlist/seed` loads the verified seed |
+| `POST` | `/watchlist/refresh` | Fetch every enabled board now |
+| `GET/POST/DELETE` | `/profile/answers` | Answers bank of remembered application answers |
+| `POST` | `/extension/forms/{id}/answers/propose` | Review-gated short-answer suggestions from saved facts |
 | `POST` | `/applications` | Create an application record |
 | `GET` | `/applications` | List applications with filter/sort |
 | `POST` | `/extension/jobs/capture` | Browser extension job capture |

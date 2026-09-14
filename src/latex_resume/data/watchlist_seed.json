@@ -1,0 +1,1135 @@
+{
+ "version": 1,
+ "verified_at": "2026-09-13",
+ "method": "read-only GET against the public Greenhouse/Lever/Ashby board APIs; boards with zero AI/ML-family postings were dropped",
+ "domains": [
+  "agents",
+  "ai_lab",
+  "automotive",
+  "autonomous_driving",
+  "consumer",
+  "consumer_ai",
+  "data_platform",
+  "defense_autonomy",
+  "developer_tools",
+  "drones",
+  "enterprise_ai",
+  "enterprise_saas",
+  "fintech",
+  "genai",
+  "health_ai",
+  "humanoid",
+  "infrastructure",
+  "iot",
+  "legal_ai",
+  "llm",
+  "ml_hardware",
+  "ml_infra",
+  "nlp",
+  "product",
+  "robotics",
+  "speech"
+ ],
+ "entries": [
+  {
+   "company": "Decagon",
+   "provider": "ashby",
+   "board_token": "decagon",
+   "domain_tags": [
+    "agents",
+    "enterprise_ai"
+   ],
+   "jobs_at_verification": 140,
+   "ai_roles_at_verification": 9
+  },
+  {
+   "company": "LangChain",
+   "provider": "ashby",
+   "board_token": "langchain",
+   "domain_tags": [
+    "agents",
+    "developer_tools"
+   ],
+   "jobs_at_verification": 108,
+   "ai_roles_at_verification": 12
+  },
+  {
+   "company": "Sierra",
+   "provider": "ashby",
+   "board_token": "sierra",
+   "domain_tags": [
+    "agents",
+    "enterprise_ai"
+   ],
+   "jobs_at_verification": 210,
+   "ai_roles_at_verification": 1
+  },
+  {
+   "company": "Helm.ai",
+   "provider": "ashby",
+   "board_token": "helm-ai",
+   "domain_tags": [
+    "autonomous_driving",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 8,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Kodiak Robotics",
+   "provider": "greenhouse",
+   "board_token": "kodiak",
+   "domain_tags": [
+    "autonomous_driving"
+   ],
+   "jobs_at_verification": 65,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Lucid Motors",
+   "provider": "greenhouse",
+   "board_token": "lucidmotors",
+   "domain_tags": [
+    "autonomous_driving",
+    "automotive"
+   ],
+   "jobs_at_verification": 364,
+   "ai_roles_at_verification": 6
+  },
+  {
+   "company": "May Mobility",
+   "provider": "greenhouse",
+   "board_token": "maymobility",
+   "domain_tags": [
+    "autonomous_driving"
+   ],
+   "jobs_at_verification": 43,
+   "ai_roles_at_verification": 16
+  },
+  {
+   "company": "Motional",
+   "provider": "greenhouse",
+   "board_token": "motional",
+   "domain_tags": [
+    "autonomous_driving"
+   ],
+   "jobs_at_verification": 67,
+   "ai_roles_at_verification": 16
+  },
+  {
+   "company": "Nuro",
+   "provider": "greenhouse",
+   "board_token": "nuro",
+   "domain_tags": [
+    "autonomous_driving",
+    "robotics"
+   ],
+   "jobs_at_verification": 106,
+   "ai_roles_at_verification": 34
+  },
+  {
+   "company": "Stack AV",
+   "provider": "greenhouse",
+   "board_token": "stackav",
+   "domain_tags": [
+    "autonomous_driving"
+   ],
+   "jobs_at_verification": 11,
+   "ai_roles_at_verification": 3
+  },
+  {
+   "company": "Torc Robotics",
+   "provider": "greenhouse",
+   "board_token": "torcrobotics",
+   "domain_tags": [
+    "autonomous_driving"
+   ],
+   "jobs_at_verification": 54,
+   "ai_roles_at_verification": 18
+  },
+  {
+   "company": "Waabi",
+   "provider": "lever",
+   "board_token": "waabi",
+   "domain_tags": [
+    "autonomous_driving",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 86,
+   "ai_roles_at_verification": 23
+  },
+  {
+   "company": "Waymo",
+   "provider": "greenhouse",
+   "board_token": "waymo",
+   "domain_tags": [
+    "autonomous_driving"
+   ],
+   "jobs_at_verification": 331,
+   "ai_roles_at_verification": 86
+  },
+  {
+   "company": "Wayve",
+   "provider": "greenhouse",
+   "board_token": "wayve",
+   "domain_tags": [
+    "autonomous_driving",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 170,
+   "ai_roles_at_verification": 51
+  },
+  {
+   "company": "Zoox",
+   "provider": "lever",
+   "board_token": "zoox",
+   "domain_tags": [
+    "autonomous_driving",
+    "robotics"
+   ],
+   "jobs_at_verification": 245,
+   "ai_roles_at_verification": 47
+  },
+  {
+   "company": "Databricks",
+   "provider": "greenhouse",
+   "board_token": "databricks",
+   "domain_tags": [
+    "data_platform",
+    "ml_infra"
+   ],
+   "jobs_at_verification": 891,
+   "ai_roles_at_verification": 84
+  },
+  {
+   "company": "Dataiku",
+   "provider": "greenhouse",
+   "board_token": "dataiku",
+   "domain_tags": [
+    "data_platform"
+   ],
+   "jobs_at_verification": 27,
+   "ai_roles_at_verification": 3
+  },
+  {
+   "company": "Hex",
+   "provider": "ashby",
+   "board_token": "hex",
+   "domain_tags": [
+    "data_platform"
+   ],
+   "jobs_at_verification": 33,
+   "ai_roles_at_verification": 3
+  },
+  {
+   "company": "Labelbox",
+   "provider": "greenhouse",
+   "board_token": "labelbox",
+   "domain_tags": [
+    "data_platform"
+   ],
+   "jobs_at_verification": 10,
+   "ai_roles_at_verification": 3
+  },
+  {
+   "company": "Palantir",
+   "provider": "lever",
+   "board_token": "palantir",
+   "domain_tags": [
+    "data_platform",
+    "enterprise_ai"
+   ],
+   "jobs_at_verification": 311,
+   "ai_roles_at_verification": 3
+  },
+  {
+   "company": "Scale AI",
+   "provider": "greenhouse",
+   "board_token": "scaleai",
+   "domain_tags": [
+    "data_platform",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 223,
+   "ai_roles_at_verification": 65
+  },
+  {
+   "company": "Snorkel AI",
+   "provider": "greenhouse",
+   "board_token": "snorkelai",
+   "domain_tags": [
+    "data_platform"
+   ],
+   "jobs_at_verification": 39,
+   "ai_roles_at_verification": 10
+  },
+  {
+   "company": "Anysphere (Cursor)",
+   "provider": "ashby",
+   "board_token": "cursor",
+   "domain_tags": [
+    "developer_tools",
+    "agents"
+   ],
+   "jobs_at_verification": 127,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Cognition",
+   "provider": "ashby",
+   "board_token": "cognition",
+   "domain_tags": [
+    "developer_tools",
+    "agents"
+   ],
+   "jobs_at_verification": 94,
+   "ai_roles_at_verification": 14
+  },
+  {
+   "company": "Replit",
+   "provider": "ashby",
+   "board_token": "replit",
+   "domain_tags": [
+    "developer_tools",
+    "agents"
+   ],
+   "jobs_at_verification": 76,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Vercel",
+   "provider": "greenhouse",
+   "board_token": "vercel",
+   "domain_tags": [
+    "developer_tools"
+   ],
+   "jobs_at_verification": 86,
+   "ai_roles_at_verification": 3
+  },
+  {
+   "company": "AirOps",
+   "provider": "ashby",
+   "board_token": "airops",
+   "domain_tags": [
+    "enterprise_ai",
+    "agents"
+   ],
+   "jobs_at_verification": 16,
+   "ai_roles_at_verification": 1
+  },
+  {
+   "company": "C3 AI",
+   "provider": "greenhouse",
+   "board_token": "c3iot",
+   "domain_tags": [
+    "enterprise_ai"
+   ],
+   "jobs_at_verification": 68,
+   "ai_roles_at_verification": 17
+  },
+  {
+   "company": "Glean",
+   "provider": "greenhouse",
+   "board_token": "gleanwork",
+   "domain_tags": [
+    "enterprise_ai"
+   ],
+   "jobs_at_verification": 118,
+   "ai_roles_at_verification": 19
+  },
+  {
+   "company": "Harvey",
+   "provider": "ashby",
+   "board_token": "harvey",
+   "domain_tags": [
+    "enterprise_ai",
+    "legal_ai"
+   ],
+   "jobs_at_verification": 325,
+   "ai_roles_at_verification": 9
+  },
+  {
+   "company": "Writer",
+   "provider": "ashby",
+   "board_token": "writer",
+   "domain_tags": [
+    "enterprise_ai",
+    "llm"
+   ],
+   "jobs_at_verification": 49,
+   "ai_roles_at_verification": 22
+  },
+  {
+   "company": "ElevenLabs",
+   "provider": "ashby",
+   "board_token": "elevenlabs",
+   "domain_tags": [
+    "genai",
+    "speech"
+   ],
+   "jobs_at_verification": 246,
+   "ai_roles_at_verification": 7
+  },
+  {
+   "company": "Luma AI",
+   "provider": "ashby",
+   "board_token": "lumaai",
+   "domain_tags": [
+    "genai"
+   ],
+   "jobs_at_verification": 44,
+   "ai_roles_at_verification": 7
+  },
+  {
+   "company": "Suno",
+   "provider": "ashby",
+   "board_token": "suno",
+   "domain_tags": [
+    "genai"
+   ],
+   "jobs_at_verification": 66,
+   "ai_roles_at_verification": 9
+  },
+  {
+   "company": "Abridge",
+   "provider": "ashby",
+   "board_token": "abridge",
+   "domain_tags": [
+    "health_ai",
+    "speech"
+   ],
+   "jobs_at_verification": 40,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Insitro",
+   "provider": "ashby",
+   "board_token": "insitro",
+   "domain_tags": [
+    "health_ai"
+   ],
+   "jobs_at_verification": 15,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Anthropic",
+   "provider": "greenhouse",
+   "board_token": "anthropic",
+   "domain_tags": [
+    "llm",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 596,
+   "ai_roles_at_verification": 109
+  },
+  {
+   "company": "Character.AI",
+   "provider": "ashby",
+   "board_token": "character",
+   "domain_tags": [
+    "llm",
+    "consumer_ai"
+   ],
+   "jobs_at_verification": 13,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Cohere",
+   "provider": "ashby",
+   "board_token": "cohere",
+   "domain_tags": [
+    "llm",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 144,
+   "ai_roles_at_verification": 21
+  },
+  {
+   "company": "OpenAI",
+   "provider": "ashby",
+   "board_token": "openai",
+   "domain_tags": [
+    "llm",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 794,
+   "ai_roles_at_verification": 143
+  },
+  {
+   "company": "Perplexity",
+   "provider": "ashby",
+   "board_token": "perplexity",
+   "domain_tags": [
+    "llm",
+    "consumer_ai"
+   ],
+   "jobs_at_verification": 115,
+   "ai_roles_at_verification": 24
+  },
+  {
+   "company": "xAI",
+   "provider": "greenhouse",
+   "board_token": "xai",
+   "domain_tags": [
+    "llm",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 254,
+   "ai_roles_at_verification": 34
+  },
+  {
+   "company": "Cerebras",
+   "provider": "ashby",
+   "board_token": "cerebras",
+   "domain_tags": [
+    "ml_hardware"
+   ],
+   "jobs_at_verification": 111,
+   "ai_roles_at_verification": 24
+  },
+  {
+   "company": "Etched",
+   "provider": "ashby",
+   "board_token": "etched",
+   "domain_tags": [
+    "ml_hardware"
+   ],
+   "jobs_at_verification": 104,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Lightmatter",
+   "provider": "greenhouse",
+   "board_token": "lightmatter",
+   "domain_tags": [
+    "ml_hardware"
+   ],
+   "jobs_at_verification": 63,
+   "ai_roles_at_verification": 2
+  },
+  {
+   "company": "SambaNova",
+   "provider": "greenhouse",
+   "board_token": "sambanovasystems",
+   "domain_tags": [
+    "ml_hardware"
+   ],
+   "jobs_at_verification": 55,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Tenstorrent",
+   "provider": "greenhouse",
+   "board_token": "tenstorrent",
+   "domain_tags": [
+    "ml_hardware"
+   ],
+   "jobs_at_verification": 131,
+   "ai_roles_at_verification": 21
+  },
+  {
+   "company": "Anyscale",
+   "provider": "ashby",
+   "board_token": "anyscale",
+   "domain_tags": [
+    "ml_infra"
+   ],
+   "jobs_at_verification": 20,
+   "ai_roles_at_verification": 3
+  },
+  {
+   "company": "Baseten",
+   "provider": "ashby",
+   "board_token": "baseten",
+   "domain_tags": [
+    "ml_infra"
+   ],
+   "jobs_at_verification": 94,
+   "ai_roles_at_verification": 11
+  },
+  {
+   "company": "CoreWeave",
+   "provider": "greenhouse",
+   "board_token": "coreweave",
+   "domain_tags": [
+    "ml_infra"
+   ],
+   "jobs_at_verification": 295,
+   "ai_roles_at_verification": 19
+  },
+  {
+   "company": "Crusoe",
+   "provider": "ashby",
+   "board_token": "crusoe",
+   "domain_tags": [
+    "ml_infra"
+   ],
+   "jobs_at_verification": 371,
+   "ai_roles_at_verification": 12
+  },
+  {
+   "company": "Fireworks AI",
+   "provider": "ashby",
+   "board_token": "fireworks",
+   "domain_tags": [
+    "ml_infra",
+    "llm"
+   ],
+   "jobs_at_verification": 74,
+   "ai_roles_at_verification": 17
+  },
+  {
+   "company": "Lambda",
+   "provider": "ashby",
+   "board_token": "lambda",
+   "domain_tags": [
+    "ml_infra",
+    "ml_hardware"
+   ],
+   "jobs_at_verification": 87,
+   "ai_roles_at_verification": 2
+  },
+  {
+   "company": "Modal",
+   "provider": "ashby",
+   "board_token": "modal",
+   "domain_tags": [
+    "ml_infra"
+   ],
+   "jobs_at_verification": 31,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Together AI",
+   "provider": "greenhouse",
+   "board_token": "togetherai",
+   "domain_tags": [
+    "ml_infra",
+    "llm"
+   ],
+   "jobs_at_verification": 63,
+   "ai_roles_at_verification": 14
+  },
+  {
+   "company": "Affirm",
+   "provider": "greenhouse",
+   "board_token": "affirm",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 208,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Airbnb",
+   "provider": "greenhouse",
+   "board_token": "airbnb",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 164,
+   "ai_roles_at_verification": 21
+  },
+  {
+   "company": "Airtable",
+   "provider": "greenhouse",
+   "board_token": "airtable",
+   "domain_tags": [
+    "product",
+    "enterprise_saas"
+   ],
+   "jobs_at_verification": 16,
+   "ai_roles_at_verification": 1
+  },
+  {
+   "company": "Asana",
+   "provider": "greenhouse",
+   "board_token": "asana",
+   "domain_tags": [
+    "product",
+    "enterprise_saas"
+   ],
+   "jobs_at_verification": 103,
+   "ai_roles_at_verification": 9
+  },
+  {
+   "company": "Brex",
+   "provider": "greenhouse",
+   "board_token": "brex",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 272,
+   "ai_roles_at_verification": 20
+  },
+  {
+   "company": "Chime",
+   "provider": "greenhouse",
+   "board_token": "chime",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 70,
+   "ai_roles_at_verification": 11
+  },
+  {
+   "company": "Cloudflare",
+   "provider": "greenhouse",
+   "board_token": "cloudflare",
+   "domain_tags": [
+    "product",
+    "infrastructure"
+   ],
+   "jobs_at_verification": 358,
+   "ai_roles_at_verification": 17
+  },
+  {
+   "company": "Coinbase",
+   "provider": "greenhouse",
+   "board_token": "coinbase",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 218,
+   "ai_roles_at_verification": 16
+  },
+  {
+   "company": "Datadog",
+   "provider": "greenhouse",
+   "board_token": "datadog",
+   "domain_tags": [
+    "product",
+    "infrastructure"
+   ],
+   "jobs_at_verification": 446,
+   "ai_roles_at_verification": 28
+  },
+  {
+   "company": "Discord",
+   "provider": "greenhouse",
+   "board_token": "discord",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 46,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "DoorDash",
+   "provider": "greenhouse",
+   "board_token": "doordashusa",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 456,
+   "ai_roles_at_verification": 36
+  },
+  {
+   "company": "Dropbox",
+   "provider": "greenhouse",
+   "board_token": "dropbox",
+   "domain_tags": [
+    "product",
+    "enterprise_saas"
+   ],
+   "jobs_at_verification": 41,
+   "ai_roles_at_verification": 2
+  },
+  {
+   "company": "Duolingo",
+   "provider": "greenhouse",
+   "board_token": "duolingo",
+   "domain_tags": [
+    "product",
+    "nlp"
+   ],
+   "jobs_at_verification": 80,
+   "ai_roles_at_verification": 10
+  },
+  {
+   "company": "Faire",
+   "provider": "greenhouse",
+   "board_token": "faire",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 67,
+   "ai_roles_at_verification": 21
+  },
+  {
+   "company": "Figma",
+   "provider": "greenhouse",
+   "board_token": "figma",
+   "domain_tags": [
+    "product"
+   ],
+   "jobs_at_verification": 153,
+   "ai_roles_at_verification": 18
+  },
+  {
+   "company": "Gusto",
+   "provider": "greenhouse",
+   "board_token": "gusto",
+   "domain_tags": [
+    "product",
+    "enterprise_saas"
+   ],
+   "jobs_at_verification": 95,
+   "ai_roles_at_verification": 15
+  },
+  {
+   "company": "Instacart",
+   "provider": "greenhouse",
+   "board_token": "instacart",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 104,
+   "ai_roles_at_verification": 17
+  },
+  {
+   "company": "Linear",
+   "provider": "ashby",
+   "board_token": "linear",
+   "domain_tags": [
+    "product",
+    "developer_tools"
+   ],
+   "jobs_at_verification": 30,
+   "ai_roles_at_verification": 1
+  },
+  {
+   "company": "Lyft",
+   "provider": "greenhouse",
+   "board_token": "lyft",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 183,
+   "ai_roles_at_verification": 28
+  },
+  {
+   "company": "Mercury",
+   "provider": "greenhouse",
+   "board_token": "mercury",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 61,
+   "ai_roles_at_verification": 5
+  },
+  {
+   "company": "MongoDB",
+   "provider": "greenhouse",
+   "board_token": "mongodb",
+   "domain_tags": [
+    "product",
+    "infrastructure"
+   ],
+   "jobs_at_verification": 405,
+   "ai_roles_at_verification": 19
+  },
+  {
+   "company": "Notion",
+   "provider": "ashby",
+   "board_token": "notion",
+   "domain_tags": [
+    "product",
+    "enterprise_ai"
+   ],
+   "jobs_at_verification": 127,
+   "ai_roles_at_verification": 11
+  },
+  {
+   "company": "Pinterest",
+   "provider": "greenhouse",
+   "board_token": "pinterest",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 183,
+   "ai_roles_at_verification": 33
+  },
+  {
+   "company": "Plaid",
+   "provider": "ashby",
+   "board_token": "plaid",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 110,
+   "ai_roles_at_verification": 19
+  },
+  {
+   "company": "Ramp",
+   "provider": "ashby",
+   "board_token": "ramp",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 145,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Reddit",
+   "provider": "greenhouse",
+   "board_token": "reddit",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 148,
+   "ai_roles_at_verification": 42
+  },
+  {
+   "company": "Robinhood",
+   "provider": "greenhouse",
+   "board_token": "robinhood",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 126,
+   "ai_roles_at_verification": 7
+  },
+  {
+   "company": "Roblox",
+   "provider": "greenhouse",
+   "board_token": "roblox",
+   "domain_tags": [
+    "product",
+    "consumer"
+   ],
+   "jobs_at_verification": 232,
+   "ai_roles_at_verification": 26
+  },
+  {
+   "company": "Samsara",
+   "provider": "greenhouse",
+   "board_token": "samsara",
+   "domain_tags": [
+    "product",
+    "iot"
+   ],
+   "jobs_at_verification": 243,
+   "ai_roles_at_verification": 21
+  },
+  {
+   "company": "Stripe",
+   "provider": "greenhouse",
+   "board_token": "stripe",
+   "domain_tags": [
+    "product",
+    "fintech"
+   ],
+   "jobs_at_verification": 632,
+   "ai_roles_at_verification": 33
+  },
+  {
+   "company": "Twilio",
+   "provider": "greenhouse",
+   "board_token": "twilio",
+   "domain_tags": [
+    "product",
+    "infrastructure"
+   ],
+   "jobs_at_verification": 149,
+   "ai_roles_at_verification": 10
+  },
+  {
+   "company": "1X Technologies",
+   "provider": "ashby",
+   "board_token": "1x",
+   "domain_tags": [
+    "robotics",
+    "humanoid"
+   ],
+   "jobs_at_verification": 87,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Agility Robotics",
+   "provider": "greenhouse",
+   "board_token": "agilityrobotics",
+   "domain_tags": [
+    "robotics",
+    "humanoid"
+   ],
+   "jobs_at_verification": 66,
+   "ai_roles_at_verification": 13
+  },
+  {
+   "company": "Anduril",
+   "provider": "greenhouse",
+   "board_token": "andurilindustries",
+   "domain_tags": [
+    "robotics",
+    "defense_autonomy"
+   ],
+   "jobs_at_verification": 2293,
+   "ai_roles_at_verification": 137
+  },
+  {
+   "company": "Apptronik",
+   "provider": "greenhouse",
+   "board_token": "apptronik",
+   "domain_tags": [
+    "robotics",
+    "humanoid"
+   ],
+   "jobs_at_verification": 83,
+   "ai_roles_at_verification": 14
+  },
+  {
+   "company": "Bright Machines",
+   "provider": "lever",
+   "board_token": "brightmachines",
+   "domain_tags": [
+    "robotics"
+   ],
+   "jobs_at_verification": 13,
+   "ai_roles_at_verification": 2
+  },
+  {
+   "company": "Collaborative Robotics",
+   "provider": "ashby",
+   "board_token": "cobot",
+   "domain_tags": [
+    "robotics"
+   ],
+   "jobs_at_verification": 12,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Dexterity",
+   "provider": "lever",
+   "board_token": "dexterity",
+   "domain_tags": [
+    "robotics"
+   ],
+   "jobs_at_verification": 31,
+   "ai_roles_at_verification": 9
+  },
+  {
+   "company": "Diligent Robotics",
+   "provider": "greenhouse",
+   "board_token": "diligentrobotics",
+   "domain_tags": [
+    "robotics",
+    "health_ai"
+   ],
+   "jobs_at_verification": 12,
+   "ai_roles_at_verification": 2
+  },
+  {
+   "company": "Figure AI",
+   "provider": "greenhouse",
+   "board_token": "figureai",
+   "domain_tags": [
+    "robotics",
+    "humanoid"
+   ],
+   "jobs_at_verification": 102,
+   "ai_roles_at_verification": 17
+  },
+  {
+   "company": "Locus Robotics",
+   "provider": "greenhouse",
+   "board_token": "locusrobotics",
+   "domain_tags": [
+    "robotics"
+   ],
+   "jobs_at_verification": 8,
+   "ai_roles_at_verification": 5
+  },
+  {
+   "company": "Path Robotics",
+   "provider": "greenhouse",
+   "board_token": "pathrobotics",
+   "domain_tags": [
+    "robotics"
+   ],
+   "jobs_at_verification": 39,
+   "ai_roles_at_verification": 11
+  },
+  {
+   "company": "Physical Intelligence",
+   "provider": "ashby",
+   "board_token": "physicalintelligence",
+   "domain_tags": [
+    "robotics",
+    "ai_lab"
+   ],
+   "jobs_at_verification": 35,
+   "ai_roles_at_verification": 8
+  },
+  {
+   "company": "Saronic",
+   "provider": "ashby",
+   "board_token": "saronic",
+   "domain_tags": [
+    "robotics",
+    "defense_autonomy"
+   ],
+   "jobs_at_verification": 203,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Serve Robotics",
+   "provider": "ashby",
+   "board_token": "serverobotics",
+   "domain_tags": [
+    "robotics",
+    "autonomous_driving"
+   ],
+   "jobs_at_verification": 34,
+   "ai_roles_at_verification": 1
+  },
+  {
+   "company": "Skydio",
+   "provider": "ashby",
+   "board_token": "skydio",
+   "domain_tags": [
+    "robotics",
+    "drones"
+   ],
+   "jobs_at_verification": 131,
+   "ai_roles_at_verification": 22
+  },
+  {
+   "company": "The Bot Company",
+   "provider": "ashby",
+   "board_token": "thebotcompany",
+   "domain_tags": [
+    "robotics"
+   ],
+   "jobs_at_verification": 7,
+   "ai_roles_at_verification": 4
+  },
+  {
+   "company": "Zipline",
+   "provider": "greenhouse",
+   "board_token": "flyzipline",
+   "domain_tags": [
+    "robotics",
+    "drones"
+   ],
+   "jobs_at_verification": 347,
+   "ai_roles_at_verification": 14
+  }
+ ]
+}

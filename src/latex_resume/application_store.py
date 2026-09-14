@@ -23,10 +23,13 @@ from latex_resume.job_models import (
     ApplicationTask,
     CandidateProfile,
     FormScan,
+    IngestionRun,
     JobPosting,
     JobSearchResult,
     ProjectRecord,
     ProjectSource,
+    SavedAnswer,
+    WatchlistEntry,
     utc_now,
 )
 
@@ -243,6 +246,36 @@ class ApplicationStore:
                     value TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS profile_answers (
+                    answer_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    normalized_prompt TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(profile_id, normalized_prompt)
+                );
+
+                CREATE TABLE IF NOT EXISTS watchlist_entries (
+                    entry_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    board_token TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(profile_id, provider, board_token)
+                );
+
+                CREATE TABLE IF NOT EXISTS ingestion_runs (
+                    run_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    started_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_jobs_watchlist
+                    ON jobs(json_extract(payload_json, '$.captured_for_profile_id'))
+                    WHERE json_extract(payload_json, '$.watchlist_entry_id') IS NOT NULL;
                 """
             )
 
@@ -634,6 +667,310 @@ class ApplicationStore:
                 ),
             )
         return updated
+
+    # ------------------------------------------------------------------
+    # Watchlist and feed
+    # ------------------------------------------------------------------
+
+    def list_watchlist_entries(
+        self,
+        profile_id: str,
+        *,
+        enabled_only: bool = False,
+    ) -> list[WatchlistEntry]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM watchlist_entries WHERE profile_id = ? ORDER BY updated_at DESC",
+                (profile_id,),
+            ).fetchall()
+        entries = [WatchlistEntry.model_validate_json(row["payload_json"]) for row in rows]
+        if enabled_only:
+            entries = [entry for entry in entries if entry.enabled]
+        return sorted(entries, key=lambda entry: entry.company.casefold())
+
+    def get_watchlist_entry(self, profile_id: str, entry_id: str) -> WatchlistEntry | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM watchlist_entries WHERE profile_id = ? AND entry_id = ?",
+                (profile_id, entry_id),
+            ).fetchone()
+        return WatchlistEntry.model_validate_json(row["payload_json"]) if row else None
+
+    def upsert_watchlist_entry(self, entry: WatchlistEntry) -> WatchlistEntry:
+        """Insert or update by (profile, provider, board); keeps identity and stats."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM watchlist_entries
+                WHERE profile_id = ? AND provider = ? AND board_token = ?
+                """,
+                (entry.profile_id, entry.provider.value, entry.board_token),
+            ).fetchone()
+            existing = WatchlistEntry.model_validate_json(row["payload_json"]) if row else None
+            stored = entry.model_copy(
+                update={
+                    "entry_id": existing.entry_id if existing else entry.entry_id,
+                    "domain_tags": list(dict.fromkeys([*(existing.domain_tags if existing else []), *entry.domain_tags]))[:12],
+                    "last_checked_at": existing.last_checked_at if existing else entry.last_checked_at,
+                    "last_error": existing.last_error if existing else entry.last_error,
+                    "last_job_count": existing.last_job_count if existing else entry.last_job_count,
+                    "last_matched_count": existing.last_matched_count if existing else entry.last_matched_count,
+                    "created_at": existing.created_at if existing else entry.created_at,
+                    "updated_at": utc_now(),
+                }
+            )
+            connection.execute(
+                """
+                INSERT INTO watchlist_entries
+                    (entry_id, profile_id, provider, board_token, payload_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id, provider, board_token) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    stored.entry_id,
+                    stored.profile_id,
+                    stored.provider.value,
+                    stored.board_token,
+                    stored.model_dump_json(),
+                    stored.updated_at,
+                ),
+            )
+        return stored
+
+    def update_watchlist_entry(
+        self,
+        profile_id: str,
+        entry_id: str,
+        updates: dict[str, Any],
+    ) -> WatchlistEntry:
+        entry = self.get_watchlist_entry(profile_id, entry_id)
+        if entry is None:
+            raise KeyError(f"Watchlist entry '{entry_id}' not found.")
+        updated = entry.model_copy(update={**updates, "updated_at": utc_now()})
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE watchlist_entries SET payload_json = ?, updated_at = ? WHERE entry_id = ?",
+                (updated.model_dump_json(), updated.updated_at, entry_id),
+            )
+        return updated
+
+    def delete_watchlist_entry(self, profile_id: str, entry_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM watchlist_entries WHERE profile_id = ? AND entry_id = ?",
+                (profile_id, entry_id),
+            )
+        return cursor.rowcount > 0
+
+    def list_profiles_with_watchlists(self) -> list[str]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT profile_id FROM watchlist_entries ORDER BY profile_id"
+            ).fetchall()
+        return [str(row["profile_id"]) for row in rows]
+
+    def save_ingestion_run(self, run: IngestionRun) -> IngestionRun:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO ingestion_runs (run_id, profile_id, payload_json, started_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (run.run_id, run.profile_id, run.model_dump_json(), run.started_at),
+            )
+        return run
+
+    def list_ingestion_runs(self, profile_id: str, limit: int = 20) -> list[IngestionRun]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM ingestion_runs
+                WHERE profile_id = ? ORDER BY started_at DESC LIMIT ?
+                """,
+                (profile_id, max(1, limit)),
+            ).fetchall()
+        return [IngestionRun.model_validate_json(row["payload_json"]) for row in rows]
+
+    def upsert_feed_jobs(self, jobs: list[JobPosting]) -> tuple[int, int]:
+        """Persist ingested jobs, preserving ``first_seen_at``. Returns (new, updated)."""
+        new_count = 0
+        updated_count = 0
+        now = utc_now()
+        with self._lock, self._connect() as connection:
+            for job in jobs:
+                row = connection.execute(
+                    "SELECT payload_json FROM jobs WHERE job_id = ?",
+                    (job.job_id,),
+                ).fetchone()
+                if row:
+                    existing = JobPosting.model_validate_json(row["payload_json"])
+                    stored = job.model_copy(
+                        update={
+                            "first_seen_at": existing.first_seen_at or existing.retrieved_at,
+                            "captured_for_profile_id": job.captured_for_profile_id or existing.captured_for_profile_id,
+                        }
+                    )
+                    updated_count += 1
+                else:
+                    stored = job.model_copy(update={"first_seen_at": job.first_seen_at or now})
+                    new_count += 1
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO jobs
+                        (job_id, search_id, payload_json, company, title, apply_url, retrieved_at)
+                    VALUES (?, NULL, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        stored.job_id,
+                        stored.model_dump_json(),
+                        stored.company,
+                        stored.title,
+                        stored.apply_url,
+                        stored.retrieved_at,
+                    ),
+                )
+        return new_count, updated_count
+
+    def list_feed_jobs(
+        self,
+        profile_id: str,
+        *,
+        since: str | None = None,
+        min_fit: float | None = None,
+        domain_tags: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[JobPosting]:
+        """Watchlist-ingested jobs for a profile, best fit first, then newest."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM jobs
+                WHERE json_extract(payload_json, '$.watchlist_entry_id') IS NOT NULL
+                  AND json_extract(payload_json, '$.captured_for_profile_id') = ?
+                """,
+                (profile_id,),
+            ).fetchall()
+        jobs = [JobPosting.model_validate_json(row["payload_json"]) for row in rows]
+        wanted_tags = {tag.casefold() for tag in (domain_tags or []) if tag.strip()}
+        filtered = [
+            job
+            for job in jobs
+            if (since is None or (job.first_seen_at or job.retrieved_at) >= since)
+            and (min_fit is None or (job.fit_score is not None and job.fit_score >= min_fit))
+            and (not wanted_tags or wanted_tags.intersection(tag.casefold() for tag in job.domain_tags))
+        ]
+        filtered.sort(
+            key=lambda job: (
+                -(job.fit_score if job.fit_score is not None else -1.0),
+                job.first_seen_at or job.retrieved_at,
+            ),
+            reverse=False,
+        )
+        # Highest fit first; among equal fit, newest first.
+        filtered.sort(key=lambda job: job.first_seen_at or job.retrieved_at, reverse=True)
+        filtered.sort(key=lambda job: -(job.fit_score if job.fit_score is not None else -1.0))
+        return filtered[: max(1, limit)]
+
+    # ------------------------------------------------------------------
+    # Answers bank
+    # ------------------------------------------------------------------
+
+    def list_profile_answers(self, profile_id: str) -> list[SavedAnswer]:
+        """Return remembered answers for one profile, most recently updated first."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM profile_answers
+                WHERE profile_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (profile_id,),
+            ).fetchall()
+        return [SavedAnswer.model_validate_json(row["payload_json"]) for row in rows]
+
+    def get_profile_answer(self, profile_id: str, answer_id: str) -> SavedAnswer | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM profile_answers WHERE profile_id = ? AND answer_id = ?",
+                (profile_id, answer_id),
+            ).fetchone()
+        return SavedAnswer.model_validate_json(row["payload_json"]) if row else None
+
+    def upsert_profile_answer(self, answer: SavedAnswer) -> SavedAnswer:
+        """Insert or replace by (profile, normalized prompt), keeping identity and usage."""
+        key = answer.normalized_prompt or answer.prompt_text.casefold().strip()
+        with self._lock, self._connect() as connection:
+            existing_row = connection.execute(
+                "SELECT payload_json FROM profile_answers WHERE profile_id = ? AND normalized_prompt = ?",
+                (answer.profile_id, key),
+            ).fetchone()
+            existing = SavedAnswer.model_validate_json(existing_row["payload_json"]) if existing_row else None
+            merged_aliases = list(dict.fromkeys([*(existing.aliases if existing else []), *answer.aliases]))
+            stored = answer.model_copy(
+                update={
+                    "answer_id": existing.answer_id if existing else answer.answer_id,
+                    "normalized_prompt": key,
+                    "aliases": merged_aliases[:32],
+                    "use_count": existing.use_count if existing else answer.use_count,
+                    "last_used_at": existing.last_used_at if existing else answer.last_used_at,
+                    "created_at": existing.created_at if existing else answer.created_at,
+                    "updated_at": utc_now(),
+                }
+            )
+            connection.execute(
+                """
+                INSERT INTO profile_answers
+                    (answer_id, profile_id, normalized_prompt, payload_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id, normalized_prompt) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    stored.answer_id,
+                    stored.profile_id,
+                    stored.normalized_prompt,
+                    stored.model_dump_json(),
+                    stored.updated_at,
+                ),
+            )
+        return stored
+
+    def delete_profile_answer(self, profile_id: str, answer_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM profile_answers WHERE profile_id = ? AND answer_id = ?",
+                (profile_id, answer_id),
+            )
+        return cursor.rowcount > 0
+
+    def record_profile_answer_usage(self, profile_id: str, answer_ids: list[str]) -> int:
+        """Bump ``use_count`` / ``last_used_at`` after a reviewed fill used the answers."""
+        if not answer_ids:
+            return 0
+        now = utc_now()
+        recorded = 0
+        with self._lock, self._connect() as connection:
+            for answer_id in dict.fromkeys(answer_ids):
+                row = connection.execute(
+                    "SELECT payload_json FROM profile_answers WHERE profile_id = ? AND answer_id = ?",
+                    (profile_id, answer_id),
+                ).fetchone()
+                if row is None:
+                    continue
+                answer = SavedAnswer.model_validate_json(row["payload_json"])
+                updated = answer.model_copy(
+                    update={"use_count": answer.use_count + 1, "last_used_at": now, "updated_at": now}
+                )
+                connection.execute(
+                    "UPDATE profile_answers SET payload_json = ?, updated_at = ? WHERE answer_id = ?",
+                    (updated.model_dump_json(), now, answer_id),
+                )
+                recorded += 1
+        return recorded
 
     def replace_profile_projects(
         self,
