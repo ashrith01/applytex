@@ -177,6 +177,7 @@ uv run python -m latex_resume.engine samples/sample_resume.tex
 | `APPLYTEX_LOG_FORMAT` | `console` | Log format: `console` (coloured key=value) or `json` (for log pipelines) |
 | `APPLYTEX_WATCHLIST_REFRESH_MINUTES` | `180` | Scheduled watchlist refresh cadence; `0` disables the loop |
 | `APPLYTEX_WATCHLIST_STRICT` | `1` | Only feed jobs matching saved role/location preferences |
+| `APPLYTEX_EXECUTOR_DAILY_CAP` | `20` | Maximum executor runs per profile per day (`0` = unlimited) |
 | `LOG_LEVEL` | `info` | Log level: `debug` \| `info` \| `warning` \| `error` |
 | `HOST` | `127.0.0.1` | API bind address |
 | `PORT` | `8000` | API bind port |
@@ -304,6 +305,8 @@ Full interactive docs at `http://localhost:8000/docs` when the API is running.
 | `POST/GET` | `/applications/{id}/submission` | Confirm a submission and read its immutable receipt |
 | `POST/GET/PATCH` | `/applications/{id}/cover-letter` | Draft, edit, and approve a grounded cover letter |
 | `GET` | `/applications/tasks/due` | Follow-ups due today (`within_days` widens the window) |
+| `POST` | `/applications/{id}/apply-runs` | Queue a local executor run (fill, pause for review, submit after approval) |
+| `GET/POST` | `/apply-runs`, `/apply-runs/{id}/approve` | Watch runs; approve a paused review to let the executor submit |
 | `POST` | `/extension/forms/{id}/answers/propose` | Review-gated short-answer suggestions from saved facts |
 | `POST` | `/applications` | Create an application record |
 | `GET` | `/applications` | List applications with filter/sort |

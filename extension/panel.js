@@ -354,10 +354,18 @@
       const saved = savedStorage || await chrome.storage.local.get([FLOW_STORAGE_KEY, "applicationByUrl", "applicationByJob"]);
       syncPageContext(saved[FLOW_STORAGE_KEY] || {});
       if (!state.job) restoreFlowContext(saved[FLOW_STORAGE_KEY] || {});
+      // A local executor run binds the panel to a known job and application
+      // instead of re-capturing the posting from the page.
+      const executor = window.__applytexExecutor;
+      if (executor?.application_id && executor?.job) {
+        state.job = executor.job;
+        state.applicationId = executor.application_id;
+        state.contextRestoreSource = "executor run";
+      }
       state.contextWarning = "";
 
       let captureError = null;
-      if (forceCapture || shouldCaptureJobFromPage()) {
+      if (forceCapture || (!executor && shouldCaptureJobFromPage())) {
         try {
           const previousJobId = state.job?.job_id || null;
           const capturedJob = await extractJobFromPage(state.provider);
@@ -4593,8 +4601,10 @@
 
   function isLowConfidenceApplicationContext() {
     if (!isApplicationLikePage()) return false;
-    const confidence = Number(state.job?.capture_confidence);
-    if (Number.isFinite(confidence) && confidence < 0.55) return true;
+    // Only a page capture carries a confidence score. Jobs from the board APIs
+    // or the watchlist feed have null here and are trusted as-is.
+    const confidence = state.job?.capture_confidence;
+    if (typeof confidence === "number" && Number.isFinite(confidence) && confidence < 0.55) return true;
     return weakText(state.job?.description || "").length < 180;
   }
 
