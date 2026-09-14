@@ -12,7 +12,10 @@ from typing import Any, Literal
 
 from latex_resume.job_models import (
     ALLOWED_APPLICATION_TRANSITIONS,
+    APPLY_RUN_TRANSITIONS,
     ApplicationArtifact,
+    ApplyRun,
+    ApplyRunLogEntry,
     ApplicationArtifactStatus,
     ApplicationArtifactType,
     ApplicationDetail,
@@ -29,9 +32,14 @@ from latex_resume.job_models import (
     ProjectRecord,
     ProjectSource,
     SavedAnswer,
+    SubmissionBundle,
     WatchlistEntry,
     utc_now,
 )
+
+
+class InvalidApplyRunTransition(ValueError):
+    """Raised when a run is moved to a status the executor/user protocol forbids."""
 
 
 class InvalidApplicationTransition(ValueError):
@@ -271,6 +279,24 @@ class ApplicationStore:
                     profile_id TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     started_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS apply_runs (
+                    run_id TEXT PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS submission_bundles (
+                    bundle_id TEXT PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_jobs_watchlist
@@ -1151,6 +1177,192 @@ class ApplicationStore:
             ).fetchone()
         return FormScan.model_validate_json(row["payload_json"]) if row else None
 
+    def list_form_scans(self, application_id: str, limit: int = 200) -> list[FormScan]:
+        """Every scan for one application, oldest first (multi-step flows produce several)."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM form_scans
+                WHERE application_id = ?
+                ORDER BY captured_at ASC
+                LIMIT ?
+                """,
+                (application_id, max(1, limit)),
+            ).fetchall()
+        return [FormScan.model_validate_json(row["payload_json"]) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Executor runs
+    # ------------------------------------------------------------------
+
+    def create_apply_run(self, run: ApplyRun) -> ApplyRun:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO apply_runs
+                    (run_id, application_id, profile_id, status, payload_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (run.run_id, run.application_id, run.profile_id, run.status, run.model_dump_json(), run.created_at, run.updated_at),
+            )
+        return run
+
+    def get_apply_run(self, run_id: str) -> ApplyRun | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload_json FROM apply_runs WHERE run_id = ?", (run_id,)).fetchone()
+        return ApplyRun.model_validate_json(row["payload_json"]) if row else None
+
+    def list_apply_runs(
+        self,
+        profile_id: str,
+        *,
+        statuses: list[str] | None = None,
+        application_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ApplyRun]:
+        clauses = ["profile_id = ?"]
+        params: list[object] = [profile_id]
+        if statuses:
+            clauses.append(f"status IN ({','.join('?' for _ in statuses)})")
+            params.extend(statuses)
+        if application_id:
+            clauses.append("application_id = ?")
+            params.append(application_id)
+        params.append(max(1, limit))
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT payload_json FROM apply_runs WHERE {' AND '.join(clauses)} ORDER BY created_at ASC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        return [ApplyRun.model_validate_json(row["payload_json"]) for row in rows]
+
+    def count_apply_runs_since(self, profile_id: str, since: str) -> int:
+        """Runs created since ``since`` that were not cancelled — the daily-cap counter."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM apply_runs WHERE profile_id = ? AND created_at >= ? AND status != 'cancelled'",
+                (profile_id, since),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def transition_apply_run(
+        self,
+        run_id: str,
+        target: str,
+        *,
+        actor: str,
+        updates: dict[str, Any] | None = None,
+        log_message: str = "",
+        log_level: str = "info",
+        expected_status: str | None = None,
+    ) -> ApplyRun:
+        """Move a run along the executor/user protocol; ``running -> running`` is a progress update."""
+        run = self.get_apply_run(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run_id: {run_id}")
+        if expected_status is not None and run.status != expected_status:
+            raise InvalidApplyRunTransition(
+                f"Run is {run.status}, expected {expected_status}."
+            )
+        allowed = APPLY_RUN_TRANSITIONS.get(run.status, {})
+        if target not in allowed:
+            raise InvalidApplyRunTransition(f"Cannot move run from {run.status} to {target}.")
+        if allowed[target] != actor:
+            raise InvalidApplyRunTransition(
+                f"Only the {allowed[target]} may move a run from {run.status} to {target}."
+            )
+        now = utc_now()
+        merged: dict[str, Any] = {**(updates or {}), "status": target, "updated_at": now}
+        if target == "running" and run.started_at is None:
+            merged["started_at"] = now
+        if target in {"submitted", "needs_verification", "failed", "cancelled"}:
+            merged["finished_at"] = now
+        if log_message:
+            merged["step_log"] = [
+                *run.step_log,
+                ApplyRunLogEntry(level=log_level, message=log_message[:1000]),  # type: ignore[arg-type]
+            ][-200:]
+        updated = run.model_copy(update=merged)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE apply_runs SET status = ?, payload_json = ?, updated_at = ? WHERE run_id = ?",
+                (updated.status, updated.model_dump_json(), updated.updated_at, run_id),
+            )
+        return updated
+
+    # ------------------------------------------------------------------
+    # Submission receipts (insert-only)
+    # ------------------------------------------------------------------
+
+    def save_submission_bundle(self, bundle: SubmissionBundle) -> SubmissionBundle:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO submission_bundles
+                    (bundle_id, application_id, profile_id, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (bundle.bundle_id, bundle.application_id, bundle.profile_id, bundle.model_dump_json(), bundle.created_at),
+            )
+        return bundle
+
+    def get_submission_bundle(self, application_id: str) -> SubmissionBundle | None:
+        """Latest receipt for an application, if it was ever confirmed submitted."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM submission_bundles
+                WHERE application_id = ? ORDER BY created_at DESC LIMIT 1
+                """,
+                (application_id,),
+            ).fetchone()
+        return SubmissionBundle.model_validate_json(row["payload_json"]) if row else None
+
+    def list_due_tasks(
+        self,
+        profile_id: str,
+        *,
+        due_before: str,
+        limit: int = 100,
+    ) -> list[tuple[ApplicationTask, ApplicationRecord]]:
+        """Open tasks with a due date at or before ``due_before`` for one profile."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT t.payload_json AS task_json, a.payload_json AS application_json
+                FROM application_tasks t
+                JOIN applications a ON a.application_id = t.application_id
+                WHERE t.status = 'open' AND t.due_at IS NOT NULL AND t.due_at <= ?
+                  AND json_extract(a.payload_json, '$.profile_id') = ?
+                ORDER BY t.due_at ASC
+                LIMIT ?
+                """,
+                (due_before, profile_id, max(1, limit)),
+            ).fetchall()
+        return [
+            (
+                ApplicationTask.model_validate_json(row["task_json"]),
+                ApplicationRecord.model_validate_json(row["application_json"]),
+            )
+            for row in rows
+        ]
+
+    def complete_application_task(self, task_id: str) -> ApplicationTask:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM application_tasks WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown task_id: {task_id}")
+            task = ApplicationTask.model_validate_json(row["payload_json"])
+            done = task.model_copy(update={"status": "done", "completed_at": utc_now()})
+            connection.execute(
+                "UPDATE application_tasks SET payload_json = ?, status = ? WHERE task_id = ?",
+                (done.model_dump_json(), done.status, task_id),
+            )
+        return done
+
     def get_latest_form_scan(self, application_id: str) -> FormScan | None:
         """Return the latest scan for one application, if any."""
         with self._lock, self._connect() as connection:
@@ -1216,6 +1428,11 @@ class ApplicationStore:
                 app_updates["stage"] = ApplicationStage.TAILORING
             if updated.status is ApplicationArtifactStatus.UPLOADED:
                 app_updates["stage"] = ApplicationStage.FORM_REVIEW
+        elif updated.type is ApplicationArtifactType.COVER_LETTER and updated.status in {
+            ApplicationArtifactStatus.APPROVED,
+            ApplicationArtifactStatus.UPLOADED,
+        }:
+            app_updates["cover_letter_artifact_id"] = updated.artifact_id
         if app_updates:
             self.update_application(updated.application_id, app_updates)
         return updated

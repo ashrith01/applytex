@@ -368,6 +368,142 @@ class ApplicationRecord(BaseModel):
     approved_at: str | None = None
     applied_at: str | None = None
     submitted_at: str | None = None
+    submission_bundle_id: str | None = None
+
+
+class SubmissionField(BaseModel):
+    """One form field as it stood when the submission was confirmed."""
+
+    field_id: str
+    label: str
+    step_key: str = ""
+    required: bool = False
+    input_type: str = ""
+    value: str | bool | list[str] | None = None
+    source: str = ""
+
+
+class SubmissionStep(BaseModel):
+    scan_id: str
+    step_key: str = ""
+    page_url: str = ""
+    captured_at: str = ""
+    field_count: int = 0
+
+
+class SubmissionBundle(BaseModel):
+    """Immutable receipt: exactly what was on the forms and which files were attached.
+
+    Written once when the user confirms a submission. Later profile, resume,
+    or answer edits never change it.
+    """
+
+    bundle_id: str
+    application_id: str
+    profile_id: str = "default"
+    job_id: str
+    job_title: str = ""
+    company: str = ""
+    provider: str = ""
+    apply_url: str = ""
+    source_url: str = ""
+    job_description_sha256: str = ""
+    resume_artifact_id: str | None = None
+    resume_filename: str = ""
+    resume_sha256: str = ""
+    resume_origin: Literal["tailored_artifact", "profile_resume", "none"] = "none"
+    cover_letter_artifact_id: str | None = None
+    cover_letter_filename: str = ""
+    cover_letter_sha256: str = ""
+    fields: list[SubmissionField] = Field(default_factory=list)
+    steps: list[SubmissionStep] = Field(default_factory=list)
+    confirmed_by: Literal["user", "detected_confirmed"] = "user"
+    detection_evidence: str = ""
+    notes: str = ""
+    created_at: str = Field(default_factory=utc_now)
+
+
+ApplyRunStatus = Literal[
+    "queued",
+    "running",
+    "awaiting_input",
+    "paused_for_review",
+    "approved",
+    "submitting",
+    "submitted",
+    "needs_verification",
+    "failed",
+    "cancelled",
+]
+
+ACTIVE_APPLY_RUN_STATUSES: frozenset[str] = frozenset(
+    {"queued", "running", "awaiting_input", "paused_for_review", "approved", "submitting"}
+)
+
+# Providers whose fill adapters are verified well enough for unattended filling.
+# Others need --allow-provider on the executor and stay experimental.
+EXECUTOR_PROVIDERS: frozenset[JobProvider] = frozenset(
+    {JobProvider.GREENHOUSE, JobProvider.LEVER, JobProvider.ASHBY}
+)
+
+# who may cause each hop: "user" (API caller), "executor" (the local browser worker)
+APPLY_RUN_TRANSITIONS: dict[str, dict[str, str]] = {
+    "queued": {"running": "executor", "cancelled": "user"},
+    "running": {
+        "running": "executor",
+        "awaiting_input": "executor",
+        "paused_for_review": "executor",
+        "failed": "executor",
+        "cancelled": "user",
+    },
+    "awaiting_input": {"queued": "user", "cancelled": "user", "failed": "executor"},
+    "paused_for_review": {"approved": "user", "cancelled": "user", "failed": "executor"},
+    "approved": {"submitting": "executor", "cancelled": "user"},
+    "submitting": {
+        "submitting": "executor",
+        "submitted": "executor",
+        "needs_verification": "executor",
+        "failed": "executor",
+    },
+    "needs_verification": {"submitted": "user", "cancelled": "user"},
+}
+
+
+class ApplyRunLogEntry(BaseModel):
+    at: str = Field(default_factory=utc_now)
+    level: Literal["info", "warn", "error"] = "info"
+    message: str = Field(min_length=1, max_length=1000)
+
+
+class ApplyRun(BaseModel):
+    """One executor attempt to fill (and, only after approval, submit) an application.
+
+    The executor is a local browser worker on the owner's machine. A run may
+    click the employer's final Submit button only while it is ``submitting``,
+    which requires the ``approval_token`` issued when the user approved the
+    paused review.
+    """
+
+    run_id: str
+    application_id: str
+    profile_id: str = "default"
+    job_id: str
+    provider: str = ""
+    apply_url: str = ""
+    status: ApplyRunStatus = "queued"
+    step: str = "queued"
+    step_log: list[ApplyRunLogEntry] = Field(default_factory=list)
+    unresolved_required: list[str] = Field(default_factory=list)
+    review_summary: dict[str, Any] = Field(default_factory=dict)
+    screenshot_path: str = ""
+    approval_token: str | None = None
+    approved_at: str | None = None
+    executor_id: str = ""
+    error: str = ""
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 class ApplicationArtifact(BaseModel):
@@ -382,6 +518,9 @@ class ApplicationArtifact(BaseModel):
     filename: str = ""
     mime_type: str = "application/pdf"
     latex_source: str = ""
+    # Cover letters keep their reviewed text here; the PDF is rendered on approve.
+    text_content: str = ""
+    evidence_notes: list[str] = Field(default_factory=list)
     pdf_b64: str = ""
     pdf_path: str = ""
     pdf_size_bytes: int = 0

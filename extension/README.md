@@ -29,6 +29,28 @@ without trying to recapture the job description from the login page.
 It cannot submit applications. The user reviews the completed page and clicks
 the employer's Submit button manually.
 
+## Receipts, status, and cover letters
+
+- After a fill, the panel reports the outcome and the tracker advances to
+  **ready for review** (no unresolved required fields) or **needs input** —
+  never backwards.
+- When a page looks like an employer confirmation ("Thank you for applying",
+  "Application submitted", a `/confirmation` URL) *and* the form is gone, the
+  panel shows **Looks like this application was submitted — Confirm / Not yet**.
+  Nothing is recorded until you confirm. **Mark as submitted** in the job
+  header does the same for pages the detector misses.
+- Confirming writes an immutable **receipt** (`GET /applications/{id}/submission`):
+  every scanned field's final value per step, which resume and cover letter
+  were attached (by artifact id and SHA-256), the job snapshot hash, and how it
+  was confirmed. Later profile or answer edits never change it. A follow-up
+  task is scheduled 7 days out; `GET /applications/tasks/due` lists what is due.
+- The Tailor tab gains a **Cover letter** section: draft (230–320 words,
+  grounded only in your resume and the JD — any number not already in your
+  resume is rejected), edit, approve (renders a one-page PDF when `pdflatex`
+  is available, otherwise a text file). Cover-letter upload fields then offer
+  **Attach ApplyTeX cover letter**, which injects the file exactly like the
+  resume path does.
+
 The **Autofill information** workspace edits the active local profile without
 leaving the application page. Each category is saved explicitly through a
 partial profile patch; unsaved edits never change reusable answers. Voluntary
@@ -68,6 +90,34 @@ with profile values on this fill** to review replacements; this choice resets
 after filling or when the form structure changes. Empty dropdown placeholders
 are counted as unanswered. Selections must match a unique available choice;
 ambiguous and unavailable answers stay in the review checklist.
+
+## Local executor (apply without opening the ATS yourself)
+
+`scripts/executor.mjs` is a Playwright worker that runs **on your machine** in
+a dedicated Chrome profile (`.applytex/browser-profile`, separate from your
+daily browser). It injects these same panel scripts into the employer page with
+a `chrome.*` shim, drives the panel's reviewed fill, and pauses with a
+screenshot. It clicks the employer's Submit button **only** after you approve
+the paused run in the API, which mints a one-time approval token the executor
+must present to record the receipt.
+
+```bash
+node scripts/executor.mjs --profile <your_profile_id>          # keep running while you apply
+curl -X POST localhost:8000/applications/<id>/apply-runs        # or from the feed / tracker
+curl localhost:8000/apply-runs                                  # queued / paused_for_review / awaiting_input
+curl -X POST localhost:8000/apply-runs/<run>/approve            # after reviewing the screenshot
+```
+
+Sign-in walls, CAPTCHAs and MFA are never bypassed: the run pauses as
+`awaiting_input`, you finish the step in the executor's browser window, then
+`POST /apply-runs/<run>/resume`. Unresolved required questions pause the same
+way; answer them (answers bank or extension) and resume. Only Greenhouse, Lever
+and Ashby run without `--allow-provider`. `APPLYTEX_EXECUTOR_DAILY_CAP`
+(default 20) bounds runs per day. Sending this to a hosted service is out of
+scope by design.
+
+`node scripts/executor_lab_qa.mjs` proves the loop against the synthetic lab:
+enqueue → fill → pause → approve → submit → receipt.
 
 ## Synthetic application lab
 

@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from latex_resume.api import (
     AnswerProposalRequest,
@@ -57,6 +58,7 @@ from latex_resume.routers._deps import (
     resolve_request_profile_id,
 )
 from latex_resume.run_analysis import ats_to_dict
+from latex_resume.submission import record_fill_result
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +447,46 @@ async def propose_answers(
         logger.exception("Answer proposal generation failed for scan %s", scan_id)
         raise HTTPException(502, str(exc)) from exc
     return AnswerProposalResponse(scan_id=scan_id, proposals=proposals)
+
+
+class FillResultRequest(BaseModel):
+    filled: int = Field(default=0, ge=0)
+    skipped: int = Field(default=0, ge=0)
+    failed_field_ids: list[str] = Field(default_factory=list, max_length=300)
+    profile_id: str | None = None
+
+
+class FillResultResponse(BaseModel):
+    scan_id: str
+    application_id: str | None = None
+    status: str | None = None
+    unresolved_required: list[str] = Field(default_factory=list)
+
+
+@router.post("/extension/forms/{scan_id}/fill-result", response_model=FillResultResponse)
+async def report_fill_result(
+    request: Request,
+    scan_id: str,
+    body: FillResultRequest,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> FillResultResponse:
+    """Log a reviewed fill and auto-advance to ready_for_review / needs_input."""
+    scoped_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=body.profile_id,
+    )
+    require_form_scan_for_profile(request, scan_id, scoped_profile_id)
+    return FillResultResponse(
+        **record_fill_result(
+            request.app,
+            scan_id=scan_id,
+            profile_id=scoped_profile_id,
+            filled=body.filled,
+            skipped=body.skipped,
+            failed_field_ids=body.failed_field_ids,
+        )
+    )
 
 
 @router.post("/extension/forms/{scan_id}/answers/used", response_model=AnswerUsageResponse)

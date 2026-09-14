@@ -288,7 +288,22 @@ resumes.
 5. Optional: a daily digest (local notification or email via SMTP env vars)
    — first notification primitive in the repo.
 
-### Phase 3 — Close the loop: receipt, cover letter, status (4–5 days)
+### Phase 3 — Close the loop: receipt, cover letter, status (4–5 days) — **implemented 2026-09-14**
+
+Implementation notes: `submission.py` (receipt built from the latest scan per
+step + the reviewed plan, resume/cover-letter provenance by artifact id and
+SHA-256, BFS walk through the approval gate, follow-up task), `cover_letters.py`
+(grounded draft → edit → approve → PDF, with a validator that rejects numbers
+absent from the resume/JD, links, and placeholders), routes
+`POST/GET /applications/{id}/submission`, `/cover-letter*`,
+`/artifacts/{id}/file`, `/tasks/due`, `/tasks/{id}/complete`,
+`POST /extension/forms/{scan}/fill-result`. Extension: detection prompt
+("Looks like this application was submitted — Confirm / Not yet"), manual
+"Mark as submitted", fill-result reporting, Cover letter section in the
+Tailor tab, "Attach ApplyTeX cover letter" on cover-letter upload fields.
+Decision: detection *prompts*; it never auto-advances (false positives on
+saved-draft banners were the risk). Email → status routing and notifications
+remain deferred.
 
 1. **Submission bundle** (JOBRIGHT P1): `submission_bundles(application_id,
    resume_artifact_id, resume_sha256, cover_letter_artifact_id, job_snapshot,
@@ -309,7 +324,21 @@ resumes.
 5. **Follow-up tasks:** auto-create `follow_up` 7 days after `submitted`;
    due-today list on dashboard.
 
-### Phase 4 — The executor: apply without opening the ATS (2–3 weeks)
+### Phase 4 — The executor: apply without opening the ATS (2–3 weeks) — **first slice implemented 2026-09-14**
+
+Implementation notes: instead of extracting `panel.js` primitives first, the
+executor (`scripts/executor.mjs`) injects the *real* panel scripts into a
+Playwright page with a `chrome.*` shim (the same seam the synthetic lab uses)
+and drives the panel's reviewed fill; a one-line panel hook
+(`window.__applytexExecutor`) binds the run's application. `ApplyRun` +
+`apply_runs` table, `/applications/{id}/apply-runs`, `/apply-runs/*`
+(claim / progress / approve / resume / cancel / submitted / screenshot).
+Submit is clicked only in `submitting`, reached from `approved` with a minted
+token that `POST /apply-runs/{id}/submitted` verifies. Sign-in, CAPTCHA, MFA
+and unresolved questions pause as `awaiting_input`. Dedicated Chrome profile
+under `.applytex/browser-profile`. `scripts/executor_lab_qa.mjs` runs the
+whole loop against the lab. Deferred: auto-tailor before fill, Workday
+(behind `--allow-provider`), the `panel.js` decomposition, a feed UI action.
 
 This is the Tsenta feature. Build it for **personal use on the owner's own
 machine and own logged-in browser**, not as a cloud service. Server-side login
