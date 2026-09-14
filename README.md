@@ -64,7 +64,8 @@ Current limitations:
   a submission receipt.
 - Authentication is optional and off by default (`APPLYTEX_REQUIRE_AUTH=0`). See
   [`docs/AUTH.md`](docs/AUTH.md). Profile scoping via `X-Profile-Id` works without
-  passwords for local multi-profile use.
+  passwords for local multi-profile use; with auth on, every route is bound to
+  the bearer token's profile and tokens persist across restarts.
 - PDF rendering requires a local LaTeX engine for authoritative page checks.
 - Direct OpenAI and Gemini backends are placeholders; Codex SDK is supported
   separately through local Codex authentication.
@@ -178,6 +179,7 @@ uv run python -m latex_resume.engine samples/sample_resume.tex
 | `APPLYTEX_WATCHLIST_REFRESH_MINUTES` | `180` | Scheduled watchlist refresh cadence; `0` disables the loop |
 | `APPLYTEX_WATCHLIST_STRICT` | `1` | Only feed jobs matching saved role/location preferences |
 | `APPLYTEX_EXECUTOR_DAILY_CAP` | `20` | Maximum executor runs per profile per day (`0` = unlimited) |
+| `APPLYTEX_TOKEN_TTL_HOURS` | `336` | Bearer-token lifetime when auth is required (tokens persist in SQLite) |
 | `LOG_LEVEL` | `info` | Log level: `debug` \| `info` \| `warning` \| `error` |
 | `HOST` | `127.0.0.1` | API bind address |
 | `PORT` | `8000` | API bind port |
@@ -314,6 +316,8 @@ Full interactive docs at `http://localhost:8000/docs` when the API is running.
 | `POST` | `/extension/forms/scan` | Scan a job-application form |
 | `GET` | `/extension/forms/{id}/plan` | Generate a fill plan for a scanned form |
 | `POST` | `/auth/login` | Exchange profile ID + password for a bearer token |
+| `POST` | `/auth/logout` | Revoke the current token (`?everywhere=true` for all) |
+| `GET/DELETE` | `/profile/export`, `/profile` | Export everything a profile owns; delete it with typed confirmation |
 
 LLM routes are rate-limited to 10 requests per minute per client IP. All other routes share a 200/minute global limit.
 
