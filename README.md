@@ -59,7 +59,9 @@ Current limitations:
 
 - Tailor sessions now persist in SQLite; classic `/latex/*` optimize sessions are
   still in memory and disappear when the API restarts.
-- The Chrome extension fills reviewed known fields but never submits forms.
+- The Chrome extension fills reviewed known fields but never submits forms. It
+  detects employer confirmation pages and asks you to confirm before recording
+  a submission receipt.
 - Authentication is optional and off by default (`APPLYTEX_REQUIRE_AUTH=0`). See
   [`docs/AUTH.md`](docs/AUTH.md). Profile scoping via `X-Profile-Id` works without
   passwords for local multi-profile use.
@@ -299,6 +301,9 @@ Full interactive docs at `http://localhost:8000/docs` when the API is running.
 | `GET/POST` | `/watchlist` | List or add followed boards; `POST /watchlist/seed` loads the verified seed |
 | `POST` | `/watchlist/refresh` | Fetch every enabled board now |
 | `GET/POST/DELETE` | `/profile/answers` | Answers bank of remembered application answers |
+| `POST/GET` | `/applications/{id}/submission` | Confirm a submission and read its immutable receipt |
+| `POST/GET/PATCH` | `/applications/{id}/cover-letter` | Draft, edit, and approve a grounded cover letter |
+| `GET` | `/applications/tasks/due` | Follow-ups due today (`within_days` widens the window) |
 | `POST` | `/extension/forms/{id}/answers/propose` | Review-gated short-answer suggestions from saved facts |
 | `POST` | `/applications` | Create an application record |
 | `GET` | `/applications` | List applications with filter/sort |

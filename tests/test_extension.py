@@ -881,3 +881,22 @@ def test_panel_answers_bank_actions_are_review_gated() -> None:
     # A proposal never fills the page directly; it goes through the reviewed plan override.
     assert "overrides: { [fieldId]: proposal.value }" in panel
     assert "remember," in panel
+
+
+def test_panel_records_submissions_only_after_user_confirmation() -> None:
+    """Confirmation pages prompt; nothing is recorded until a click."""
+    panel = panel_source()
+    assert "data-action=\"confirm-submission\"" in panel
+    assert "data-action=\"dismiss-submission\"" in panel
+    assert "data-action=\"mark-submitted\"" in panel
+    assert "/submission`" in panel
+    assert "confirmed_by: confirmedBy" in panel
+    # Detection reads page text without the panel's own copy and requires the form to be gone.
+    assert "function pageTextWithoutPanel" in panel
+    assert "visibleControls.length >= 3) return \"\"" in panel
+    # Fills report their outcome so the tracker advances without dragging cards.
+    assert "/fill-result`" in panel
+    # Cover letters attach through the same injection path as the resume, never by clicking Submit.
+    assert "data-action=\"attach-cover-letter\"" in panel
+    assert "function attachFileToInput" in panel
+    assert "data-action=\"approve-cover-letter\"" in panel

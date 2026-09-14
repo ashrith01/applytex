@@ -288,7 +288,22 @@ resumes.
 5. Optional: a daily digest (local notification or email via SMTP env vars)
    — first notification primitive in the repo.
 
-### Phase 3 — Close the loop: receipt, cover letter, status (4–5 days)
+### Phase 3 — Close the loop: receipt, cover letter, status (4–5 days) — **implemented 2026-09-14**
+
+Implementation notes: `submission.py` (receipt built from the latest scan per
+step + the reviewed plan, resume/cover-letter provenance by artifact id and
+SHA-256, BFS walk through the approval gate, follow-up task), `cover_letters.py`
+(grounded draft → edit → approve → PDF, with a validator that rejects numbers
+absent from the resume/JD, links, and placeholders), routes
+`POST/GET /applications/{id}/submission`, `/cover-letter*`,
+`/artifacts/{id}/file`, `/tasks/due`, `/tasks/{id}/complete`,
+`POST /extension/forms/{scan}/fill-result`. Extension: detection prompt
+("Looks like this application was submitted — Confirm / Not yet"), manual
+"Mark as submitted", fill-result reporting, Cover letter section in the
+Tailor tab, "Attach ApplyTeX cover letter" on cover-letter upload fields.
+Decision: detection *prompts*; it never auto-advances (false positives on
+saved-draft banners were the risk). Email → status routing and notifications
+remain deferred.
 
 1. **Submission bundle** (JOBRIGHT P1): `submission_bundles(application_id,
    resume_artifact_id, resume_sha256, cover_letter_artifact_id, job_snapshot,

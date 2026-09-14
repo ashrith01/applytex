@@ -50,6 +50,10 @@
     generatedAnswerFields: {},
     // Review-gated short-answer suggestions for the current scan: { scanId, items: { fieldId: proposal } }.
     answerProposals: null,
+    // Text seen on a confirmation page; the user confirms before anything is recorded.
+    submissionEvidence: "",
+    // { artifact, summary } for this application's latest cover letter, or null.
+    coverLetter: null,
     lastFillResult: null,
     resumeInfo: null,
     preview: null,
@@ -752,6 +756,7 @@
   async function loadApplicationDetail() {
     if (!state.applicationId) {
       state.applicationDetail = null;
+      state.coverLetter = null;
       return;
     }
     try {
@@ -764,6 +769,221 @@
     } catch {
       state.applicationDetail = null;
     }
+    await loadCoverLetter();
+  }
+
+  async function loadCoverLetter() {
+    state.coverLetter = null;
+    if (!state.applicationId) return;
+    try {
+      state.coverLetter = await apiRequest(`/applications/${encodeURIComponent(state.applicationId)}/cover-letter`);
+    } catch {
+      state.coverLetter = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Submission detection and receipt
+  // ---------------------------------------------------------------------
+
+  const SUBMISSION_MARKERS = [
+    /thank you for applying/i,
+    /thanks for applying/i,
+    /your application (?:has been|was) (?:successfully )?(?:submitted|received)/i,
+    /application (?:successfully )?submitted/i,
+    /we(?:'ve| have) received your application/i,
+    /you have successfully applied/i,
+  ];
+  const dismissedSubmissionKeys = new Set();
+
+  function submissionPromptKey() {
+    return `${state.applicationId || ""}|${canonicalPageKey(location.href)}`;
+  }
+
+  function pageTextWithoutPanel() {
+    return Array.from(document.body?.children || [])
+      .filter((element) => element.id !== "smartjobapply-panel" && element.id !== "smartjobapply-panel-style")
+      .map((element) => weakText(element.innerText || ""))
+      .join(" ")
+      .slice(0, 20000);
+  }
+
+  // Evidence string when this page looks like an employer confirmation page for
+  // the tracked application, or "" otherwise. Never records anything by itself.
+  function submissionConfirmationEvidence() {
+    if (!state.applicationId) return "";
+    if (state.applicationDetail?.application?.status === "submitted") return "";
+    const path = location.pathname.toLowerCase();
+    const urlHit = /\/(?:confirmation|thanks|thank-you|applied)(?:\/|$)/.test(path);
+    const text = pageTextWithoutPanel();
+    const marker = SUBMISSION_MARKERS.find((pattern) => pattern.test(text));
+    if (!marker && !urlHit) return "";
+    // A real confirmation page has no application form left to fill.
+    const fileInputs = queryAllFromPage("input[type='file']").filter(isPageElementVisible);
+    const visibleControls = queryAllFromPage("input:not([type='hidden']), select, textarea")
+      .filter((element) => !element.closest("#smartjobapply-panel") && isPageElementVisible(element));
+    if (fileInputs.length || visibleControls.length >= 3) return "";
+    if (marker) {
+      const match = text.match(marker);
+      return match ? match[0] : "confirmation page";
+    }
+    return `confirmation URL ${path}`;
+  }
+
+  function renderSubmissionBanner() {
+    if (!state.submissionEvidence || dismissedSubmissionKeys.has(submissionPromptKey())) return "";
+    return `
+      <section class="sja-submission-banner" role="status" aria-live="polite">
+        <strong>Looks like this application was submitted.</strong>
+        <span>Detected “${escapeHtml(state.submissionEvidence)}”. Confirm to save the receipt (every field, the resume and cover letter that were attached) and move it to Submitted. A follow-up reminder is scheduled for 7 days out.</span>
+        <div class="sja-actions">
+          <button data-action="confirm-submission" type="button" ${state.busy ? "disabled" : ""}>Confirm submitted</button>
+          <button class="sja-secondary-button" data-action="dismiss-submission" type="button">Not yet</button>
+        </div>
+      </section>
+    `;
+  }
+
+  async function confirmSubmission(confirmedBy, evidence) {
+    if (!state.applicationId) return;
+    await withBusy("Recording the submission receipt", async () => {
+      const response = await apiRequest(`/applications/${encodeURIComponent(state.applicationId)}/submission`, {
+        method: "POST",
+        body: JSON.stringify({
+          confirmed_by: confirmedBy,
+          detection_evidence: evidence || "",
+          profile_id: state.profileId,
+        }),
+      });
+      state.submissionEvidence = "";
+      await loadApplicationDetail();
+      const bundle = response?.bundle || {};
+      state.message = `Submission recorded: ${(bundle.fields || []).length} fields across ${(bundle.steps || []).length} step(s)`
+        + `${bundle.resume_filename ? `, resume ${bundle.resume_filename}` : ""}`
+        + `${bundle.cover_letter_filename ? `, cover letter ${bundle.cover_letter_filename}` : ""}. Follow-up scheduled in 7 days.`;
+    });
+  }
+
+  // After a reviewed fill: log the result so the tracker advances to
+  // ready_for_review / needs_input, and record remembered-answer usage.
+  async function reportFillResult(actions, result) {
+    await recordRememberedAnswersUsed(actions, result);
+    if (!state.scan?.scan_id || !state.applicationId) return;
+    try {
+      const failedIds = (result?.failed_values || []).map((item) => item.field_id).filter(Boolean);
+      await apiRequest(`/extension/forms/${state.scan.scan_id}/fill-result`, {
+        method: "POST",
+        body: JSON.stringify({
+          filled: result?.filled || 0,
+          skipped: result?.skipped || 0,
+          failed_field_ids: failedIds,
+          profile_id: state.profileId,
+        }),
+      });
+      await loadApplicationDetail();
+    } catch {
+      // Tracker bookkeeping never blocks a fill.
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Cover letter workspace
+  // ---------------------------------------------------------------------
+
+  async function draftCoverLetter() {
+    if (!state.applicationId) return;
+    await withBusy("Drafting a cover letter from your resume and this job", async () => {
+      state.coverLetter = await apiRequest(`/applications/${encodeURIComponent(state.applicationId)}/cover-letter`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      state.message = `Cover letter drafted (${state.coverLetter?.summary?.word_count || 0} words). Review the text, then approve.`;
+    });
+  }
+
+  async function saveCoverLetterEdits(text) {
+    const artifact = state.coverLetter?.artifact;
+    if (!artifact || !state.applicationId) return;
+    await withBusy("Saving cover letter edits", async () => {
+      state.coverLetter = await apiRequest(
+        `/applications/${encodeURIComponent(state.applicationId)}/cover-letter/${encodeURIComponent(artifact.artifact_id)}`,
+        { method: "PATCH", body: JSON.stringify({ text }) },
+      );
+      state.message = "Cover letter edits saved. Approve when it reads right.";
+    });
+  }
+
+  async function approveCoverLetter() {
+    const artifact = state.coverLetter?.artifact;
+    if (!artifact || !state.applicationId) return;
+    await withBusy("Approving cover letter", async () => {
+      state.coverLetter = await apiRequest(
+        `/applications/${encodeURIComponent(state.applicationId)}/cover-letter/${encodeURIComponent(artifact.artifact_id)}/approve`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      const approved = state.coverLetter?.artifact;
+      state.message = approved?.mime_type === "application/pdf"
+        ? `Cover letter approved as ${approved.filename}. Attach it from the review checklist.`
+        : "Cover letter approved as text (no PDF rendered). Attach it from the review checklist.";
+      await loadApplicationDetail();
+    });
+  }
+
+  function renderCoverLetterSection() {
+    const artifact = state.coverLetter?.artifact || null;
+    const summary = state.coverLetter?.summary || {};
+    const canDraft = Boolean(state.applicationId) && !state.busy;
+    return `
+      <section class="sja-section" aria-label="Cover letter">
+        <div class="sja-row-between">
+          <h2>Cover letter</h2>
+          <button class="sja-secondary-button" data-action="draft-cover-letter" type="button" ${canDraft ? "" : "disabled"}>${artifact ? "Redraft" : "Draft from resume + JD"}</button>
+        </div>
+        ${artifact ? `
+          <div class="sja-muted">${escapeHtml(artifact.status)} · ${summary.word_count || 0} words${summary.has_pdf ? " · PDF ready" : ""} · ${escapeHtml(artifact.filename || "")}</div>
+          <textarea class="sja-cover-letter-text" data-cover-letter-text rows="10" spellcheck="true" ${state.busy ? "disabled" : ""}>${escapeHtml(artifact.text_content || "")}</textarea>
+          <div class="sja-actions">
+            <button class="sja-secondary-button" data-action="save-cover-letter" type="button" ${state.busy ? "disabled" : ""}>Save edits</button>
+            <button data-action="approve-cover-letter" type="button" ${state.busy || artifact.status === "approved" ? "disabled" : ""}>${artifact.status === "approved" ? "Approved" : "Approve"}</button>
+          </div>
+          ${(artifact.warnings || []).map((warning) => `<div class="sja-status sja-warn">${escapeHtml(warning)}</div>`).join("")}
+          ${(summary.evidence_notes || []).length ? `<div class="sja-muted">Grounded in: ${escapeHtml(summary.evidence_notes.join("; "))}</div>` : ""}
+        ` : `<p class="sja-note">Drafts a 230–320 word letter grounded only in your resume and this job description. Any number not already in your resume is rejected before you see it.</p>`}
+      </section>
+    `;
+  }
+
+  async function attachCoverLetter(fieldId) {
+    const artifact = state.coverLetter?.artifact;
+    const question = (state.scan?.questions || []).find((candidate) => candidate.field_id === fieldId);
+    const input = findField(fieldId);
+    if (!artifact || artifact.status !== "approved") {
+      state.error = "Approve a cover letter in the Tailor tab first.";
+      render();
+      return;
+    }
+    if (question?.input_type !== "file" || !isTag(input, "input") || input.type !== "file" || input.disabled) {
+      state.error = "This upload field changed or is unavailable. Rescan the application and try again.";
+      render();
+      return;
+    }
+    await withBusy("Attaching cover letter", async () => {
+      const payload = await apiRequest(
+        `/applications/${encodeURIComponent(state.applicationId)}/artifacts/${encodeURIComponent(artifact.artifact_id)}/file`,
+      );
+      const outcome = attachFileToInput(input, payload);
+      if (outcome.error) throw new Error(outcome.error);
+      try {
+        await apiRequest(
+          `/applications/${encodeURIComponent(state.applicationId)}/artifacts/${encodeURIComponent(artifact.artifact_id)}/status`,
+          { method: "POST", body: JSON.stringify({ status: "uploaded" }) },
+        );
+      } catch {
+        // The employer control has the file either way.
+      }
+      state.message = `Attached ${payload.filename} to this field. Review the employer's upload status.`;
+      await refreshCurrentPage();
+    });
   }
 
   async function refreshApplicationScore({ quiet = false } = {}) {
@@ -801,7 +1021,7 @@
       const result = await fillReviewedFields(filledActions, run);
       state.lastFillResult = result;
       state.replaceExisting = false;
-      await recordRememberedAnswersUsed(filledActions, result);
+      await reportFillResult(filledActions, result);
       await rescanAndPlan();
       finishAutofillRun(run);
       state.message = run.cancelled
@@ -823,9 +1043,11 @@
       }
       await rescanAndPlan();
       resetAutofillRunActions(run, orderWorkdayFillActions(state.plan?.actions || []));
-      const result = await fillReviewedFields(orderWorkdayFillActions(state.plan?.actions || []), run);
+      const workdayActions = orderWorkdayFillActions(state.plan?.actions || []);
+      const result = await fillReviewedFields(workdayActions, run);
       state.lastFillResult = { ...result, added_records: records.added, record_failures: records.failures };
       state.replaceExisting = false;
+      await reportFillResult(workdayActions, result);
       await rescanAndPlan();
       applyRuntimeFailureStatuses(result);
       const unavailableCount = (result.failed_values || [])
@@ -1262,6 +1484,12 @@
       scheduleObservedRescan(700);
       return;
     }
+    // A confirmation page means the employer form is gone; ask before recording.
+    const evidence = submissionConfirmationEvidence();
+    if (evidence !== state.submissionEvidence) {
+      state.submissionEvidence = evidence;
+      render();
+    }
     const scan = scanApplicationForm(state.provider, state.recordSelections);
     const fingerprint = formFingerprint(scan);
     if (fingerprint === lastFormFingerprint) return;
@@ -1438,6 +1666,7 @@
       </div>
 
       ${renderJobSummary(pageContext)}
+      ${renderSubmissionBanner()}
 
       <div class="sja-tabs" role="tablist" aria-label="ApplyTeX panel sections">
         <button class="${state.panelTab === "autofill" ? "active" : ""}" data-tab="autofill" type="button">Autofill</button>
@@ -1472,6 +1701,14 @@
     const meaningfulStep = /^(application form|job description)$/i.test(pageContext)
       ? ""
       : pageContext;
+    const submitted = application?.status === "submitted";
+    const metaParts = [];
+    if (meaningfulStep) metaParts.push(`<span class="sja-page-context">Step: ${escapeHtml(meaningfulStep)}</span>`);
+    if (submitted) {
+      metaParts.push(`<span class="sja-page-context sja-submitted">Submitted ${escapeHtml(relativeTime(application.submitted_at))}</span>`);
+    } else if (state.applicationId) {
+      metaParts.push(`<button class="sja-inline-action" data-action="mark-submitted" type="button" ${state.busy ? "disabled" : ""}>Mark as submitted</button>`);
+    }
     return `
       <section class="sja-job-summary" aria-label="Captured job">
         <div class="sja-job-main">
@@ -1486,7 +1723,7 @@
             <span>match</span>
           </button>
         </div>
-        ${meaningfulStep ? `<div class="sja-job-meta"><span class="sja-page-context">Step: ${escapeHtml(meaningfulStep)}</span></div>` : ""}
+        ${metaParts.length ? `<div class="sja-job-meta">${metaParts.join("")}</div>` : ""}
       </section>
     `;
   }
@@ -1581,6 +1818,8 @@
           <div class="sja-jd">${escapeHtml(compactText(state.job?.description || "Reading job description..."))}</div>
         </details>
       </section>
+
+      ${renderCoverLetterSection()}
 
       <section class="sja-section sja-utility-list" aria-label="Profile and resume tools">
         <button class="sja-utility-row" data-action="open-autofill-information" data-workspace-origin="tailor-profile" type="button">
@@ -1779,12 +2018,15 @@
     const question = (state.scan?.questions || []).find((candidate) => candidate.field_id === item.field_id);
     if (question?.input_type === "file") {
       const attached = question.current_value_present;
+      const approvedLetter = state.coverLetter?.artifact?.status === "approved" ? state.coverLetter.artifact : null;
+      const coverLetterField = /cover letter/i.test(label);
       return `
         <div class="sja-question-row ${stateInfo.className}">
           <span class="sja-question-mark" aria-hidden="true">${escapeHtml(stateInfo.symbol)}</span>
           <div>
             <strong>${escapeHtml(label)} <small class="sja-question-requirement">${item.required ? "required" : "optional"}</small></strong>
             <span>${attached ? "File selected on this form. Review the employer's upload status." : "Choose a file for this application. A text answer does not attach a document."}</span>
+            ${!attached && coverLetterField && approvedLetter ? `<button class="sja-inline-action" data-action="attach-cover-letter" data-field-id="${escapeAttr(item.field_id)}" type="button">Attach ApplyTeX cover letter (${escapeHtml(approvedLetter.filename)})</button>` : ""}
             ${!attached ? `<button class="sja-inline-action" data-action="attach-document" data-field-id="${escapeAttr(item.field_id)}" type="button">Attach document</button>` : ""}
           </div>
         </div>
@@ -2408,6 +2650,34 @@
     });
     root.querySelector("[data-action='propose-answers']")?.addEventListener("pointerup", () => {
       void proposeAnswers();
+    });
+    root.querySelector("[data-action='confirm-submission']")?.addEventListener("pointerup", () => {
+      void confirmSubmission("detected_confirmed", state.submissionEvidence);
+    });
+    root.querySelector("[data-action='dismiss-submission']")?.addEventListener("pointerup", () => {
+      dismissedSubmissionKeys.add(submissionPromptKey());
+      state.submissionEvidence = "";
+      render();
+    });
+    root.querySelector("[data-action='mark-submitted']")?.addEventListener("pointerup", () => {
+      if (!window.confirm("Record this application as submitted? ApplyTeX saves a receipt of the scanned fields and attached files and schedules a follow-up.")) return;
+      void confirmSubmission("user", "");
+    });
+    root.querySelector("[data-action='draft-cover-letter']")?.addEventListener("pointerup", () => {
+      void draftCoverLetter();
+    });
+    root.querySelector("[data-action='save-cover-letter']")?.addEventListener("pointerup", () => {
+      const text = root.querySelector("[data-cover-letter-text]")?.value || "";
+      if (!text.trim()) return;
+      void saveCoverLetterEdits(text);
+    });
+    root.querySelector("[data-action='approve-cover-letter']")?.addEventListener("pointerup", () => {
+      void approveCoverLetter();
+    });
+    root.querySelectorAll("[data-action='attach-cover-letter']").forEach((button) => {
+      button.addEventListener("pointerup", () => {
+        void attachCoverLetter(button.dataset.fieldId || "");
+      });
     });
     root.querySelectorAll("[data-action='apply-proposal']").forEach((button) => {
       button.addEventListener("pointerup", () => {
@@ -3331,6 +3601,35 @@
       #smartjobapply-panel .sja-question-row.blocked .sja-question-mark {
         background: transparent;
         color: #a96519;
+      }
+      #smartjobapply-panel .sja-submission-banner {
+        margin: 8px 12px 0;
+        padding: 10px 12px;
+        border: 1px solid #b7791f;
+        border-left-width: 4px;
+        border-radius: 6px;
+        background: #fbf0da;
+        color: #1c2130;
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+      }
+      #smartjobapply-panel .sja-submission-banner .sja-actions {
+        display: flex;
+        gap: 8px;
+      }
+      #smartjobapply-panel .sja-submitted {
+        color: #1e7a4c;
+        font-weight: 600;
+      }
+      #smartjobapply-panel .sja-cover-letter-text {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 6px;
+        font: inherit;
+        font-size: 12.5px;
+        line-height: 1.45;
+        resize: vertical;
       }
       #smartjobapply-panel .sja-proposal {
         display: block;
@@ -6695,14 +6994,18 @@
       return { error: "No file upload field was found on this application." };
     }
     candidates.sort((left, right) => scoreFileInput(right) - scoreFileInput(left));
-    const input = candidates[0];
-    const binary = atob(preparedResume.data_b64);
+    return attachFileToInput(candidates[0], preparedResume);
+  }
+
+  // Place base64 file bytes into one specific employer <input type="file">.
+  function attachFileToInput(input, filePayload) {
+    const binary = atob(filePayload.data_b64);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
     }
     const inputWindow = input.ownerDocument.defaultView || window;
-    const file = new inputWindow.File([bytes], preparedResume.filename, { type: preparedResume.mime_type });
+    const file = new inputWindow.File([bytes], filePayload.filename, { type: filePayload.mime_type });
     const transfer = new inputWindow.DataTransfer();
     transfer.items.add(file);
     try {
@@ -6717,12 +7020,12 @@
       else input.files = transfer.files;
     } catch (error) {
       return {
-        error: weakText(error?.message || error) || "Could not attach the resume file to this upload field.",
+        error: weakText(error?.message || error) || "Could not attach the file to this upload field.",
       };
     }
     input.dispatchEvent(new inputWindow.Event("input", { bubbles: true }));
     input.dispatchEvent(new inputWindow.Event("change", { bubbles: true }));
-    return { uploaded: true, filename: preparedResume.filename };
+    return { uploaded: true, filename: filePayload.filename };
   }
 
   function scoreFileInput(element) {
