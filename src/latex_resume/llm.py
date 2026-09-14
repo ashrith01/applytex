@@ -40,7 +40,9 @@ import json
 import logging
 import os
 import re
-from contextvars import ContextVar
+from collections.abc import Callable
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +56,80 @@ _USAGE: ContextVar[dict[str, int] | None] = ContextVar(
     "smartjobapply_llm_usage",
     default=None,
 )
+
+
+class LLMBudgetExceeded(RuntimeError):
+    """The acting profile has used its daily LLM budget."""
+
+
+@dataclass
+class ProfileLLMContext:
+    """Per-request routing, credentials and budget for the acting profile.
+
+    Set by the API middleware from ``CandidateProfile.llm_settings``; read by
+    ``complete_json`` so the profile's own backend/key/model win over the
+    server-wide env vars and its daily budget is enforced before each call.
+    """
+
+    profile_id: str
+    backend: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    daily_call_budget: int | None = None
+    daily_token_budget: int | None = None
+    usage_reader: Callable[[str], dict[str, int]] | None = None
+    usage_sink: Callable[[str, int, int], dict[str, int]] | None = None
+
+
+_PROFILE_LLM: ContextVar[ProfileLLMContext | None] = ContextVar("applytex_profile_llm", default=None)
+
+
+def set_profile_llm_context(context: ProfileLLMContext | None) -> Token:
+    return _PROFILE_LLM.set(context)
+
+
+def reset_profile_llm_context(token: Token) -> None:
+    _PROFILE_LLM.reset(token)
+
+
+def current_profile_llm_context() -> ProfileLLMContext | None:
+    return _PROFILE_LLM.get()
+
+
+def profile_api_key(provider: str) -> str | None:
+    """The acting profile's key for *provider*, when it configured that backend."""
+    context = _PROFILE_LLM.get()
+    if context and context.backend == provider and context.api_key:
+        return context.api_key
+    return None
+
+
+def check_llm_budget(context: ProfileLLMContext | None = None) -> None:
+    """Raise ``LLMBudgetExceeded`` when today's usage has reached the profile's budget."""
+    context = context or _PROFILE_LLM.get()
+    if context is None or context.usage_reader is None:
+        return
+    if context.daily_call_budget is None and context.daily_token_budget is None:
+        return
+    usage = context.usage_reader(context.profile_id)
+    if context.daily_call_budget is not None and usage.get("calls", 0) >= context.daily_call_budget:
+        raise LLMBudgetExceeded(
+            f"Daily LLM call budget of {context.daily_call_budget} reached for profile {context.profile_id}."
+        )
+    if context.daily_token_budget is not None and usage.get("tokens", 0) >= context.daily_token_budget:
+        raise LLMBudgetExceeded(
+            f"Daily LLM token budget of {context.daily_token_budget} reached for profile {context.profile_id}."
+        )
+
+
+def record_llm_call(tokens: int, context: ProfileLLMContext | None = None) -> None:
+    context = context or _PROFILE_LLM.get()
+    if context is None or context.usage_sink is None:
+        return
+    try:
+        context.usage_sink(context.profile_id, 1, max(0, int(tokens)))
+    except Exception as exc:  # pragma: no cover - bookkeeping never fails a call
+        logger.warning("LLM usage bookkeeping failed: %s", exc)
 
 
 def reset_usage() -> None:
@@ -308,31 +384,35 @@ def _extract_json(text: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _get_anthropic_client() -> Any:
-    global _anthropic_client
-    if _anthropic_client is None:
-        import anthropic as _anthropic
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise EnvironmentError(
-                "ANTHROPIC_API_KEY is not set. "
-                "Set LLM_BACKEND=ollama to use Ollama instead."
-            )
-        _anthropic_client = _anthropic.AsyncAnthropic(api_key=api_key)
-    return _anthropic_client
+_anthropic_clients: dict[str, Any] = {}
 
 
-async def _complete_anthropic(prompt: str, system: str, retries: int) -> Any:
+def _get_anthropic_client(api_key: str | None = None) -> Any:
+    """One client per key: the profile's own key or the server env key."""
     import anthropic as _anthropic
 
-    client = _get_anthropic_client()
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise EnvironmentError(
+            "ANTHROPIC_API_KEY is not set. "
+            "Set LLM_BACKEND=ollama to use Ollama instead."
+        )
+    client = _anthropic_clients.get(key)
+    if client is None:
+        client = _anthropic_clients[key] = _anthropic.AsyncAnthropic(api_key=key)
+    return client
+
+
+async def _complete_anthropic(prompt: str, system: str, retries: int, model_override: str | None = None) -> Any:
+    import anthropic as _anthropic
+
+    client = _get_anthropic_client(profile_api_key("anthropic"))
     last_error: Exception | None = None
 
     for attempt in range(1 + retries):
         try:
             response = await client.messages.create(
-                model=ANTHROPIC_MODEL,
+                model=model_override or ANTHROPIC_MODEL,
                 max_tokens=MAX_TOKENS,
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
@@ -463,22 +543,23 @@ async def _complete_ollama(
 # Groq backend  (OpenAI-compatible; uses groq package)
 # ---------------------------------------------------------------------------
 
-_groq_client: Any = None
+_groq_clients: dict[str, Any] = {}
 
 
-def _get_groq_client() -> Any:
-    global _groq_client
-    if _groq_client is None:
-        import groq as _groq
+def _get_groq_client(api_key: str | None = None) -> Any:
+    """One client per key: the profile's own key or the server env key."""
+    import groq as _groq
 
-        api_key = os.environ.get("GROQ_API_KEY")
-        if not api_key:
-            raise EnvironmentError(
-                "GROQ_API_KEY is not set. "
-                "Add it to .env or export it before running."
-            )
-        _groq_client = _groq.AsyncGroq(api_key=api_key)
-    return _groq_client
+    key = api_key or os.environ.get("GROQ_API_KEY")
+    if not key:
+        raise EnvironmentError(
+            "GROQ_API_KEY is not set. "
+            "Add it to .env or export it before running."
+        )
+    client = _groq_clients.get(key)
+    if client is None:
+        client = _groq_clients[key] = _groq.AsyncGroq(api_key=key)
+    return client
 
 
 _GROQ_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -503,7 +584,7 @@ async def _complete_groq(
     """
     import groq as _groq
 
-    client = _get_groq_client()
+    client = _get_groq_client(profile_api_key("groq"))
     last_error: Exception | None = None
     model = model_override or GROQ_MODEL
     user_prompt = prompt
@@ -659,7 +740,7 @@ async def _complete_openai(
         from openai import AsyncOpenAI
     except ImportError as exc:
         raise EnvironmentError("The OpenAI Python package is not installed.") from exc
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = profile_api_key("openai") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise EnvironmentError("OPENAI_API_KEY is not configured.")
     client = AsyncOpenAI(api_key=api_key)
@@ -737,16 +818,40 @@ async def complete_json(
             "Output ONLY a valid JSON object — no prose, no markdown, no code fences."
         )
 
+    # A profile's own routing wins over server env defaults, but an explicit
+    # per-call override (e.g. the application-answer fallback chain) still wins.
+    profile_context = _PROFILE_LLM.get()
+    if profile_context and profile_context.backend and not backend_override:
+        backend_override = profile_context.backend
+        if profile_context.model and not model_override:
+            model_override = profile_context.model
     backend = backend_for_task(task, backend_override)
     _model_label = model_for_backend_task(backend, task, model_override)
     logger.info("complete_json: task=%s backend=%s model=%s", task or "default", backend, _model_label)
 
+    check_llm_budget(profile_context)
+    before = get_usage().get("total_tokens", 0)
+    try:
+        return await _dispatch_backend(backend, prompt, system, retries, task, model_override, web_search)
+    finally:
+        record_llm_call(get_usage().get("total_tokens", 0) - before, profile_context)
+
+
+async def _dispatch_backend(
+    backend: str,
+    prompt: str,
+    system: str,
+    retries: int,
+    task: str | None,
+    model_override: str | None,
+    web_search: bool,
+) -> Any:
     if backend == "groq":
         return await _complete_groq(prompt, system, retries, model_override)
     elif backend == "ollama":
         return await _complete_ollama(prompt, system, retries, task, model_override)
     elif backend == "anthropic":
-        return await _complete_anthropic(prompt, system, retries)
+        return await _complete_anthropic(prompt, system, retries, model_override)
     elif backend == "codex":
         return await _complete_codex(prompt, system, retries, task, model_override, web_search)
     elif backend == "openai":

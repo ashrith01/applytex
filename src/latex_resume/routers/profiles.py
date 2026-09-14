@@ -22,6 +22,9 @@ from latex_resume.api import (
     ProfileSetupResponse,
     ProfileView,
     ProjectSyncResponse,
+    LLMSettingsUpdate,
+    LLMSettingsView,
+    LLMUsageView,
     SavedAnswerListResponse,
     SavedAnswerUpsertRequest,
     SetActiveProfileRequest,
@@ -315,6 +318,75 @@ async def update_profile(
     scoped = _scoped(request, x_profile_id, body.profile_id)
     require_profile_match(scoped, body.profile_id)
     return request.app.state.application_store.save_candidate_profile(body.model_copy(update={"profile_id": scoped}))
+
+
+def _llm_settings_view(profile: CandidateProfile, encrypted: bool) -> LLMSettingsView:
+    settings = profile.llm_settings
+    key = settings.api_key or ""
+    return LLMSettingsView(
+        backend=settings.backend,
+        model=settings.model,
+        has_api_key=bool(key),
+        api_key_tail=key[-4:] if len(key) >= 8 else "",
+        daily_call_budget=settings.daily_call_budget,
+        daily_token_budget=settings.daily_token_budget,
+        encrypted_at_rest=encrypted,
+    )
+
+
+@router.get("/profile/llm", response_model=LLMSettingsView)
+async def get_profile_llm_settings(
+    request: Request,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+    profile_id: str | None = None,
+) -> LLMSettingsView:
+    """This profile's model routing and budget; the API key is never returned."""
+    store_ = request.app.state.application_store
+    return _llm_settings_view(store_.get_candidate_profile(_scoped(request, x_profile_id, profile_id)), store_.protection.enabled)
+
+
+@router.put("/profile/llm", response_model=LLMSettingsView)
+async def update_profile_llm_settings(
+    request: Request,
+    body: LLMSettingsUpdate,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+    profile_id: str | None = None,
+) -> LLMSettingsView:
+    """Set a per-profile backend, key, model, and daily budgets."""
+    store_ = request.app.state.application_store
+    scoped = _scoped(request, x_profile_id, profile_id)
+    profile = store_.get_candidate_profile(scoped)
+    updates = body.model_dump(exclude_unset=True, exclude={"clear_budgets"})
+    if "api_key" in updates and updates["api_key"] is not None and not updates["api_key"].strip():
+        updates["api_key"] = None
+    if body.clear_budgets:
+        updates["daily_call_budget"] = None
+        updates["daily_token_budget"] = None
+    settings = profile.llm_settings.model_copy(update=updates)
+    if settings.api_key and not store_.protection.enabled and auth_required():
+        logger.warning("Storing an LLM key for %s without APPLYTEX_DATA_KEY; it is not encrypted at rest.", scoped)
+    saved = store_.save_candidate_profile(profile.model_copy(update={"llm_settings": settings}))
+    return _llm_settings_view(saved, store_.protection.enabled)
+
+
+@router.get("/profile/llm/usage", response_model=LLMUsageView)
+async def get_profile_llm_usage(
+    request: Request,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+    profile_id: str | None = None,
+) -> LLMUsageView:
+    store_ = request.app.state.application_store
+    scoped = _scoped(request, x_profile_id, profile_id)
+    settings = store_.get_candidate_profile(scoped).llm_settings
+    usage = store_.get_llm_usage_today(scoped)
+    return LLMUsageView(
+        profile_id=scoped,
+        day=str(usage["day"]),
+        calls=int(usage["calls"]),
+        tokens=int(usage["tokens"]),
+        daily_call_budget=settings.daily_call_budget,
+        daily_token_budget=settings.daily_token_budget,
+    )
 
 
 @router.get("/profile/export")
