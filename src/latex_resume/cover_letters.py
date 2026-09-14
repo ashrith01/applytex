@@ -218,9 +218,14 @@ def approve_cover_letter(
             }
         )
     else:
-        updates["warnings"] = [
-            "PDF was not rendered (no LaTeX engine or the letter exceeded one page); the text version is approved."
-        ]
+        reason = (
+            "the letter exceeded one page"
+            if render.ok and render.page_count > 1
+            else "no LaTeX engine is installed"
+            if not render.ok and not render.log.strip()
+            else "LaTeX failed: " + " ".join(render.log.strip().splitlines()[-3:])[:300]
+        )
+        updates["warnings"] = [f"PDF was not rendered ({reason}); the text version is approved."]
     return store.save_application_artifact(artifact.model_copy(update=updates))
 
 
@@ -271,11 +276,11 @@ def cover_letter_latex(body: str, *, profile: CandidateProfile, application: App
     title = latex_escape(application.job_title or "the open role")
     return "\n".join(
         [
+            # Only packages present in a minimal TeX Live (geometry, parskip):
+            # lmodern / fontenc would fail on CI images and some laptops.
             r"\documentclass[11pt]{article}",
             r"\usepackage[margin=1in]{geometry}",
             r"\usepackage{parskip}",
-            r"\usepackage[T1]{fontenc}",
-            r"\usepackage{lmodern}",
             r"\pagestyle{empty}",
             r"\begin{document}",
             r"\noindent{\Large\textbf{" + latex_escape(name) + "}}\\\\",
