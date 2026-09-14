@@ -19,6 +19,7 @@ from latex_resume.form_resolution import is_question_draft_eligible
 from latex_resume.extractor import extract_full_resume
 from latex_resume.job_models import CandidateProfile, FormQuestion, FormScan, JobPosting, utc_now
 from latex_resume.llm import (
+    LLMBudgetExceeded,
     _sanitize_user_input,
     backend_for_task,
     complete_json,
@@ -289,6 +290,8 @@ async def _complete_with_fallback(
             if not isinstance(result, dict):
                 raise ValueError("Provider returned a non-object JSON value.")
             return result, provider
+        except LLMBudgetExceeded:
+            raise
         except Exception as exc:
             errors.append(f"{provider}: {exc}")
     raise RuntimeError("Application answer providers failed: " + " | ".join(errors))

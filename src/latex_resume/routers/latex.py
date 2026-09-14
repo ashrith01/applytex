@@ -126,7 +126,7 @@ async def optimize_resume(
             reviewer_backend=body.reviewer_backend,
         )
         session.optimization_result = opt
-        session.touch()
+        store.save(session)
 
     pdf_b64: str | None = None
     if opt.ats_target_met and not opt.overflow and opt.pdf_bytes:
@@ -254,7 +254,7 @@ async def refine_session(
         )
         session.optimization_result = opt
         session.latex_source = opt.modified_latex
-        session.touch()
+        store.save(session)
 
     pdf_b64 = None
     if opt.pdf_bytes and not opt.overflow:

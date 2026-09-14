@@ -60,6 +60,8 @@ from latex_resume.routers._deps import (
 from latex_resume.run_analysis import ats_to_dict
 from latex_resume.submission import record_fill_result
 
+from latex_resume.llm import LLMBudgetExceeded
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -139,6 +141,8 @@ async def prepare_extension_resume(
             optimization_strategy=body.optimization_strategy,
             reviewer_backend=body.reviewer_backend,
         )
+    except LLMBudgetExceeded:
+        raise
     except Exception as exc:
         warnings.append(
             f"Customization failed locally; using saved profile resume. Reason: {exc}"
@@ -252,6 +256,8 @@ async def preview_resume_customization(
             )
         )
         candidates, theme_gaps = split_skill_confirmation_candidates(raw_missing)
+    except LLMBudgetExceeded:
+        raise
     except Exception as exc:
         return ResumeCustomizationPreviewResponse(
             available=False,
@@ -446,6 +452,8 @@ async def propose_answers(
             company=company,
             job_title=job_title,
         )
+    except LLMBudgetExceeded:
+        raise
     except Exception as exc:
         logger.exception("Answer proposal generation failed for scan %s", scan_id)
         raise HTTPException(502, str(exc)) from exc
@@ -554,6 +562,8 @@ async def draft_application_answer(
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except LLMBudgetExceeded:
+        raise
     except Exception as exc:
         logger.exception("Application answer generation failed for scan %s", scan_id)
         raise HTTPException(502, str(exc)) from exc

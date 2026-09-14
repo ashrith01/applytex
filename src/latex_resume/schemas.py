@@ -102,6 +102,9 @@ __all__ = [
     "TailorOptimizeRequest",
     "TailorRefineRequest",
     "ApproveTailorSessionRequest",
+    "LLMSettingsView",
+    "LLMSettingsUpdate",
+    "LLMUsageView",
 ]
 
 class OptimizeRequest(BaseModel):
@@ -604,3 +607,34 @@ class TailorRefineRequest(BaseModel):
 class ApproveTailorSessionRequest(BaseModel):
     application_id: str | None = None
     filename: str | None = Field(default=None, max_length=240)
+
+
+class LLMSettingsView(BaseModel):
+    """Per-profile LLM settings with the key masked."""
+
+    backend: str | None = None
+    model: str | None = None
+    has_api_key: bool = False
+    api_key_tail: str = ""
+    daily_call_budget: int | None = None
+    daily_token_budget: int | None = None
+    encrypted_at_rest: bool = False
+
+
+class LLMSettingsUpdate(BaseModel):
+    backend: Literal["groq", "anthropic", "openai", "ollama", "codex"] | None = None
+    # Omit to keep the stored key; send "" to clear it.
+    api_key: str | None = Field(default=None, max_length=400)
+    model: str | None = Field(default=None, max_length=120)
+    daily_call_budget: int | None = Field(default=None, ge=0)
+    daily_token_budget: int | None = Field(default=None, ge=0)
+    clear_budgets: bool = False
+
+
+class LLMUsageView(BaseModel):
+    profile_id: str
+    day: str
+    calls: int = 0
+    tokens: int = 0
+    daily_call_budget: int | None = None
+    daily_token_budget: int | None = None

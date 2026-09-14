@@ -49,6 +49,8 @@ from latex_resume.routers._deps import (
 from latex_resume.session import store
 from latex_resume.submission import confirm_submission
 
+from latex_resume.llm import LLMBudgetExceeded
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -462,6 +464,8 @@ async def draft_cover_letter(
             )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except LLMBudgetExceeded:
+        raise
     except Exception as exc:
         logger.exception("Cover letter generation failed for application %s", application_id)
         raise HTTPException(502, str(exc)) from exc

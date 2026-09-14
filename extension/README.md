@@ -140,7 +140,7 @@ for setup, data design, coverage limits and additional tests.
 
 The live product surface is the in-page panel (`panel.js` plus `panel-*.js` modules). The older popup UI lives under `legacy/` and is not wired in `manifest.json`.
 
-The extension communicates with `http://127.0.0.1:8000` and opens the web UI at `http://localhost:3000` for guided resume tailoring. The signed-in username is stored in `chrome.storage.local` under `applytexExtensionProfileId` and sent as `X-Profile-Id` on API calls. When auth is required, the bearer token is stored under `applytexExtensionAccessToken` and forwarded as `Authorization` by the service worker. See [`docs/AUTH.md`](../docs/AUTH.md).
+By default the extension communicates with `http://127.0.0.1:8000` and opens the web UI at `http://localhost:3000` for guided resume tailoring. Both origins are configurable on the extension's **Options** page (right-click the toolbar icon → Options): a non-local API must use `https://`, and Chrome asks you to grant the extension access to that origin when you save. **Test connection** calls `/auth/status` through the service worker. `node scripts/package_extension.mjs` builds `dist/applytex-extension-<version>.zip` for a Web Store upload (it refuses to package debug hooks). The signed-in username is stored in `chrome.storage.local` under `applytexExtensionProfileId` and sent as `X-Profile-Id` on API calls. When auth is required, the bearer token is stored under `applytexExtensionAccessToken` and forwarded as `Authorization` by the service worker. See [`docs/AUTH.md`](../docs/AUTH.md).
 
 ## Provider depth
 

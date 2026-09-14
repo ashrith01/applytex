@@ -10,6 +10,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
+from latex_resume.data_protection import (
+    DataProtection,
+    protect_profile_payload,
+    protect_submission_fields,
+    protection_from_env,
+    unprotect_profile_payload,
+    unprotect_submission_fields,
+)
 from latex_resume.job_models import (
     ALLOWED_APPLICATION_TRANSITIONS,
     APPLY_RUN_TRANSITIONS,
@@ -147,11 +155,17 @@ def _merge_notes(primary: str, secondary: str) -> str:
 class ApplicationStore:
     """Small local-first SQLite repository for the job application MVP."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, protection: DataProtection | None = None) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        # Field-level encryption for EEO / compensation / LLM keys (no-op without a key).
+        self._protection = protection or protection_from_env()
         self._initialize()
+
+    @property
+    def protection(self) -> DataProtection:
+        return self._protection
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
@@ -279,6 +293,23 @@ class ApplicationStore:
                     profile_id TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     started_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS llm_usage (
+                    profile_id TEXT NOT NULL,
+                    day TEXT NOT NULL,
+                    calls INTEGER NOT NULL DEFAULT 0,
+                    tokens INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (profile_id, day)
+                );
+
+                CREATE TABLE IF NOT EXISTS latex_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    last_accessed REAL NOT NULL,
+                    created_at REAL NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -686,9 +717,14 @@ class ApplicationStore:
                 (profile_id,),
             ).fetchone()
         if row:
-            return CandidateProfile.model_validate_json(row["payload_json"])
+            return self._load_profile(row["payload_json"])
         profile = CandidateProfile(profile_id=profile_id)
         return self.save_candidate_profile(profile)
+
+    def _load_profile(self, payload_json: str) -> CandidateProfile:
+        return CandidateProfile.model_validate(
+            unprotect_profile_payload(json.loads(payload_json), self._protection)
+        )
 
     def list_candidate_profiles(self) -> list[CandidateProfile]:
         """Return all persisted candidate profiles, newest first."""
@@ -700,10 +736,7 @@ class ApplicationStore:
                 ORDER BY updated_at DESC
                 """
             ).fetchall()
-        return [
-            CandidateProfile.model_validate_json(row["payload_json"])
-            for row in rows
-        ]
+        return [self._load_profile(row["payload_json"]) for row in rows]
 
     def candidate_profile_exists(self, profile_id: str) -> bool:
         """Return whether a profile row already exists (without creating one)."""
@@ -720,6 +753,7 @@ class ApplicationStore:
     def save_candidate_profile(self, profile: CandidateProfile) -> CandidateProfile:
         """Persist user-owned profile facts and reusable exact answers."""
         updated = profile.model_copy(update={"updated_at": utc_now()})
+        payload = protect_profile_payload(updated.model_dump(mode="json"), self._protection)
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -729,11 +763,90 @@ class ApplicationStore:
                 """,
                 (
                     updated.profile_id,
-                    updated.model_dump_json(),
+                    json.dumps(payload, ensure_ascii=True),
                     updated.updated_at,
                 ),
             )
         return updated
+
+    # ------------------------------------------------------------------
+    # LLM usage (per profile, per UTC day) for budgets
+    # ------------------------------------------------------------------
+
+    def record_llm_usage(self, profile_id: str, calls: int, tokens: int) -> dict[str, int]:
+        day = utc_now()[:10]
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO llm_usage (profile_id, day, calls, tokens, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id, day) DO UPDATE SET
+                    calls = calls + excluded.calls,
+                    tokens = tokens + excluded.tokens,
+                    updated_at = excluded.updated_at
+                """,
+                (profile_id, day, max(0, calls), max(0, tokens), utc_now()),
+            )
+        return self.get_llm_usage_today(profile_id)
+
+    def get_llm_usage_today(self, profile_id: str) -> dict[str, int]:
+        day = utc_now()[:10]
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT calls, tokens FROM llm_usage WHERE profile_id = ? AND day = ?",
+                (profile_id, day),
+            ).fetchone()
+        return {"calls": int(row["calls"]) if row else 0, "tokens": int(row["tokens"]) if row else 0, "day": day}  # type: ignore[dict-item]
+
+    # ------------------------------------------------------------------
+    # Classic /latex sessions (durable; mirrors tailor_sessions)
+    # ------------------------------------------------------------------
+
+    def save_latex_session_payload(
+        self,
+        *,
+        session_id: str,
+        profile_id: str,
+        payload: dict[str, Any],
+        created_at: float,
+        last_accessed: float,
+    ) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO latex_sessions
+                    (session_id, profile_id, payload_json, last_accessed, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (session_id, profile_id, json.dumps(payload, ensure_ascii=True, default=str), last_accessed, created_at),
+            )
+
+    def get_latex_session_row(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT session_id, profile_id, payload_json, last_accessed, created_at FROM latex_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "session_id": row["session_id"],
+            "profile_id": row["profile_id"],
+            "payload": json.loads(row["payload_json"]),
+            "last_accessed": float(row["last_accessed"]),
+            "created_at": float(row["created_at"]),
+        }
+
+    def delete_latex_session(self, session_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM latex_sessions WHERE session_id = ?", (session_id,))
+            return cursor.rowcount > 0
+
+    def cleanup_expired_latex_sessions(self, ttl_seconds: float) -> int:
+        cutoff = time.time() - ttl_seconds
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM latex_sessions WHERE last_accessed < ?", (cutoff,))
+            return cursor.rowcount
 
     # ------------------------------------------------------------------
     # Watchlist and feed
@@ -1286,7 +1399,9 @@ class ApplicationStore:
 
     def export_profile_data(self, profile_id: str) -> dict[str, Any]:
         """Portable JSON of everything stored for one profile (no PDF bytes, no secrets)."""
-        profile = self.get_candidate_profile(profile_id).model_dump(mode="json", exclude={"resume_pdf_b64"})
+        profile = self.get_candidate_profile(profile_id).model_dump(
+            mode="json", exclude={"resume_pdf_b64": True, "llm_settings": {"api_key"}}
+        )
         applications = self.list_applications(limit=10_000, profile_id=profile_id)
         application_ids = [application.application_id for application in applications]
         detail: list[dict[str, Any]] = []
@@ -1345,6 +1460,8 @@ class ApplicationStore:
                 run("applications", "DELETE FROM applications WHERE application_id = ?", (application_id,))
             run("apply_runs", "DELETE FROM apply_runs WHERE profile_id = ?", (profile_id,))
             run("tailor_sessions", "DELETE FROM tailor_sessions WHERE profile_id = ?", (profile_id,))
+            run("latex_sessions", "DELETE FROM latex_sessions WHERE profile_id = ?", (profile_id,))
+            run("llm_usage", "DELETE FROM llm_usage WHERE profile_id = ?", (profile_id,))
             run("jobs", "DELETE FROM jobs WHERE json_extract(payload_json, '$.captured_for_profile_id') = ?", (profile_id,))
             for table in ("profile_answers", "candidate_projects", "watchlist_entries", "ingestion_runs", "auth_sessions"):
                 run(table, f"DELETE FROM {table} WHERE profile_id = ?", (profile_id,))
@@ -1473,6 +1590,8 @@ class ApplicationStore:
     # ------------------------------------------------------------------
 
     def save_submission_bundle(self, bundle: SubmissionBundle) -> SubmissionBundle:
+        payload = bundle.model_dump(mode="json")
+        payload["fields"] = protect_submission_fields(payload["fields"], self._protection)
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -1480,7 +1599,7 @@ class ApplicationStore:
                     (bundle_id, application_id, profile_id, payload_json, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (bundle.bundle_id, bundle.application_id, bundle.profile_id, bundle.model_dump_json(), bundle.created_at),
+                (bundle.bundle_id, bundle.application_id, bundle.profile_id, json.dumps(payload, ensure_ascii=True), bundle.created_at),
             )
         return bundle
 
@@ -1494,7 +1613,11 @@ class ApplicationStore:
                 """,
                 (application_id,),
             ).fetchone()
-        return SubmissionBundle.model_validate_json(row["payload_json"]) if row else None
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        payload["fields"] = unprotect_submission_fields(payload.get("fields", []), self._protection)
+        return SubmissionBundle.model_validate(payload)
 
     def list_due_tasks(
         self,

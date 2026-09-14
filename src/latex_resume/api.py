@@ -130,6 +130,12 @@ from latex_resume.local_auth import (
     install_auth_middleware,
     rate_limit_key,
 )
+from latex_resume.llm import (
+    LLMBudgetExceeded,
+    ProfileLLMContext,
+    reset_profile_llm_context,
+    set_profile_llm_context,
+)
 from latex_resume.artifact_files import load_pdf_b64, persist_b64_pdf
 from latex_resume.tailor_store import TailorSession, tailor_store
 from latex_resume.job_models import AnswerProposal, SavedAnswer
@@ -198,6 +204,9 @@ from latex_resume.schemas import (  # noqa: E402,F401
     TailorOptimizeRequest,
     TailorRefineRequest,
     ApproveTailorSessionRequest,
+    LLMSettingsView,
+    LLMSettingsUpdate,
+    LLMUsageView,
 )
 
 # ---------------------------------------------------------------------------
@@ -232,8 +241,51 @@ async def _session_cleanup_loop() -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _llm_budget_exceeded_handler(request: Request, exc: LLMBudgetExceeded):  # type: ignore[no-untyped-def]
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+
+def _install_profile_llm_middleware(app: FastAPI) -> None:
+    """Bind the acting profile's LLM routing, key and budget to the request context."""
+
+    @app.middleware("http")
+    async def bind_profile_llm(request: Request, call_next):  # type: ignore[no-untyped-def]
+        profile_id = getattr(request.state, "auth_profile_id", None)
+        if not profile_id and not auth_required():
+            profile_id = (request.headers.get("x-profile-id") or "").strip() or None
+        token = None
+        store_ = app.state.application_store
+        if profile_id and store_.candidate_profile_exists(profile_id):
+            settings = store_.get_candidate_profile(profile_id).llm_settings
+            token = set_profile_llm_context(
+                ProfileLLMContext(
+                    profile_id=profile_id,
+                    backend=settings.backend,
+                    api_key=settings.api_key,
+                    model=settings.model,
+                    daily_call_budget=settings.daily_call_budget,
+                    daily_token_budget=settings.daily_token_budget,
+                    usage_reader=store_.get_llm_usage_today,
+                    usage_sink=store_.record_llm_usage,
+                )
+            )
+        try:
+            return await call_next(request)
+        finally:
+            if token is not None:
+                reset_profile_llm_context(token)
+
+
 def _validate_startup(app: FastAPI) -> None:
     """Fail fast if critical configuration is unusable."""
+    if auth_required() and not app.state.application_store.protection.enabled:
+        logger.warning(
+            "APPLYTEX_REQUIRE_AUTH=1 but APPLYTEX_DATA_KEY is not set: EEO answers, compensation and "
+            "per-profile LLM keys are stored in plain JSON. Generate a key with "
+            "`python -m latex_resume.data_protection`."
+        )
     db_path: Path = app.state.application_store.path
     try:
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1189,9 +1241,14 @@ def create_app(
         board_client=getattr(app.state.job_search_service, "board_client", None),
     )
     tailor_store.bind(app.state.application_store)
+    store.bind(app.state.application_store)
+    # Registered before the auth middleware so it runs after it (inner) and can
+    # read the bearer-bound profile.
+    _install_profile_llm_middleware(app)
     install_auth_middleware(app, app.state.auth_store)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(LLMBudgetExceeded, _llm_budget_exceeded_handler)  # type: ignore[arg-type]
 
     app.add_middleware(
         CORSMiddleware,
