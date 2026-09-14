@@ -127,10 +127,17 @@ async def job_feed(
 async def get_job(
     request: Request,
     job_id: str,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+    profile_id: str | None = None,
 ) -> JobPosting:
-    """Return one saved job by ID."""
+    """Return one saved job by ID. Jobs captured for another profile are not visible."""
+    scoped_profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=x_profile_id,
+        profile_id=profile_id,
+    )
     job = request.app.state.application_store.get_job(job_id)
-    if job is None:
+    if job is None or (job.captured_for_profile_id and job.captured_for_profile_id != scoped_profile_id):
         raise HTTPException(404, f"Job '{job_id}' not found.")
     return job
 

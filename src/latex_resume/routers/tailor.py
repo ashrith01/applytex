@@ -38,16 +38,34 @@ from latex_resume.optimizer import (
 )
 from latex_resume.project_library import allowed_statement_ids_after_project_filter
 from latex_resume.renderer import check_one_page
+from latex_resume.local_auth import auth_required
 from latex_resume.routers._deps import (
     require_application_for_profile,
     resolve_request_profile_id,
 )
 from latex_resume.session import store
-from latex_resume.tailor_store import tailor_store
+from latex_resume.tailor_store import TailorSession, tailor_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _owned_tailor_session(request: Request, session_id: str) -> TailorSession:
+    """Tailor sessions belong to the profile that opened them; others get 404.
+
+    Sessions created before ownership existed have an empty profile_id; they
+    stay reachable in local mode and are hidden once auth is required.
+    """
+    scoped = resolve_request_profile_id(request=request, x_profile_id=request.headers.get("x-profile-id"))
+    session = tailor_store.get(session_id)
+    if (
+        session is None
+        or (session.profile_id and session.profile_id != scoped)
+        or (not session.profile_id and auth_required())
+    ):
+        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    return session
 
 
 @router.post("/tailor/sessions", response_model=TailorSessionResponse)
@@ -56,11 +74,13 @@ async def create_tailor_session(
     body: CreateTailorSessionRequest,
 ) -> TailorSessionResponse:
     """Bootstrap a guided tailor flow for a saved job and active profile."""
-    profile_id = (
-        body.profile_id
-        or request.app.state.application_store.get_active_profile_id()
+    profile_id = resolve_request_profile_id(
+        request=request,
+        x_profile_id=request.headers.get("x-profile-id"),
+        profile_id=body.profile_id,
     )
-    request.app.state.application_store.set_active_profile_id(profile_id)
+    if not auth_required():
+        request.app.state.application_store.set_active_profile_id(profile_id)
     profile = request.app.state.application_store.get_candidate_profile(profile_id)
     job = request.app.state.application_store.get_job(body.job_id)
     if job is None:
@@ -81,6 +101,7 @@ async def create_tailor_session(
         parse_result=parse_result,
         latex_source=profile.resume_latex_source,
         filename=profile.resume_filename or "profile_resume.tex",
+        profile_id=profile_id,
     )
     session = tailor_store.create(
         job_id=body.job_id,
@@ -107,9 +128,7 @@ async def get_tailor_session(
     request: Request,
     session_id: str,
 ) -> TailorSessionResponse:
-    session = tailor_store.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    session = _owned_tailor_session(request, session_id)
     return await _build_tailor_session_response(request.app, session)
 
 
@@ -119,9 +138,7 @@ async def update_tailor_session(
     session_id: str,
     body: UpdateTailorSessionRequest,
 ) -> TailorSessionResponse:
-    session = tailor_store.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    session = _owned_tailor_session(request, session_id)
     if body.confirmed_skills is not None:
         session.confirmed_skills = list(body.confirmed_skills)
     if body.current_latex is not None:
@@ -143,9 +160,7 @@ async def rank_tailor_projects(
     session_id: str,
 ) -> ProjectRankResponse:
     """Rank resume and GitHub projects against this session's job."""
-    session = tailor_store.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    session = _owned_tailor_session(request, session_id)
     ranked = await _rank_projects_for_session(
         request.app,
         session,
@@ -162,9 +177,7 @@ async def update_tailor_projects(
     body: UpdateTailorProjectsRequest,
 ) -> ProjectRankResponse:
     """Persist user-approved resume projects for the tailored PDF."""
-    session = tailor_store.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    session = _owned_tailor_session(request, session_id)
     if not session.project_recommendations:
         await _rank_projects_for_session(request.app, session, reset_default=True)
     selectable_ids = {
@@ -189,9 +202,7 @@ async def optimize_tailor_session(
     session_id: str,
     body: TailorOptimizeRequest,
 ) -> TailorSessionResponse:
-    session = tailor_store.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    session = _owned_tailor_session(request, session_id)
     job = request.app.state.application_store.get_job(session.job_id)
     if job is None:
         raise HTTPException(404, f"Job '{session.job_id}' not found.")
@@ -258,9 +269,7 @@ async def refine_tailor_session(
     session_id: str,
     body: TailorRefineRequest,
 ) -> TailorSessionResponse:
-    session = tailor_store.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    session = _owned_tailor_session(request, session_id)
     job = request.app.state.application_store.get_job(session.job_id)
     if job is None:
         raise HTTPException(404, f"Job '{session.job_id}' not found.")
@@ -305,9 +314,7 @@ async def approve_tailor_session(
         x_profile_id=x_profile_id,
         profile_id=profile_id,
     )
-    session = tailor_store.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Tailor session '{session_id}' not found.")
+    session = _owned_tailor_session(request, session_id)
     if session.profile_id and session.profile_id != scoped_profile_id:
         raise HTTPException(404, f"Tailor session '{session_id}' not found.")
     application_id = body.application_id or session.application_id

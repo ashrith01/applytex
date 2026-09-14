@@ -39,6 +39,9 @@ class ResumeSession:
     latex_source: str  # original source (before any edits)
     filename: str
 
+    # Owning profile; "" for sessions opened before ownership existed.
+    profile_id: str = ""
+
     # Set after optimization
     optimization_result: OptimizationResult | None = None
 
@@ -94,6 +97,7 @@ class SessionStore:
         parse_result: ParseResult,
         latex_source: str,
         filename: str,
+        profile_id: str = "",
     ) -> ResumeSession:
         """Create and register a new session; return it."""
         session_id = str(uuid.uuid4())
@@ -102,6 +106,7 @@ class SessionStore:
             parse_result=parse_result,
             latex_source=latex_source,
             filename=filename,
+            profile_id=profile_id,
         )
         async with self._meta_lock:
             self._sessions[session_id] = session

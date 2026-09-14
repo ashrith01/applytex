@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 
 from latex_resume.api import (
     AnalyzeRequest,
@@ -39,18 +39,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def _get_session_or_404(session_id: str) -> ResumeSession:
+async def _get_session_or_404(session_id: str, profile_id: str | None = None) -> ResumeSession:
     """Local alias that delegates to the shared helper in api.py."""
     # Import here to avoid a module-level circular import between routers
     # and api (api.py is not fully loaded until after all router modules
     # are first imported inside create_app()).
     from latex_resume.api import _get_session_or_404 as _orig  # noqa: PLC0415
-    return await _orig(session_id)
+    return await _orig(session_id, profile_id)
+
+
+def _scoped(request: Request, x_profile_id: str | None, profile_id: str | None = None) -> str:
+    from latex_resume.routers._deps import resolve_request_profile_id  # noqa: PLC0415
+
+    return resolve_request_profile_id(request=request, x_profile_id=x_profile_id, profile_id=profile_id)
 
 
 @router.post("/latex/upload", response_model=UploadResponse)
-async def upload_resume(file: UploadFile = File(...)) -> UploadResponse:
-    """Parse a ``.tex`` file and open a new optimization session."""
+async def upload_resume(
+    request: Request,
+    file: UploadFile = File(...),
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> UploadResponse:
+    """Parse a ``.tex`` file and open a new optimization session owned by this profile."""
+    scoped_profile_id = _scoped(request, x_profile_id)
     if not file.filename or not file.filename.endswith(".tex"):
         raise HTTPException(400, "Only .tex files are accepted.")
 
@@ -75,6 +86,7 @@ async def upload_resume(file: UploadFile = File(...)) -> UploadResponse:
         parse_result=pr,
         latex_source=latex_source,
         filename=file.filename,
+        profile_id=scoped_profile_id,
     )
 
     editable_data = extract_editable(pr)
@@ -91,9 +103,15 @@ async def upload_resume(file: UploadFile = File(...)) -> UploadResponse:
 
 @router.post("/latex/optimize", response_model=OptimizeResponse)
 @limiter.limit("10/minute")
-async def optimize_resume(request: Request, body: OptimizeRequest) -> OptimizeResponse:
+async def optimize_resume(
+    request: Request,
+    body: OptimizeRequest,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> OptimizeResponse:
     """Run the full LLM optimization pipeline for a session."""
-    session = await _get_session_or_404(body.session_id)
+
+    scoped_profile_id = _scoped(request, x_profile_id)
+    session = await _get_session_or_404(body.session_id, scoped_profile_id)
 
     if not body.job_description.strip():
         raise HTTPException(400, "job_description must not be empty.")
@@ -137,17 +155,28 @@ async def optimize_resume(request: Request, body: OptimizeRequest) -> OptimizeRe
 
 
 @router.get("/latex/{session_id}/status", response_model=StatusResponse)
-async def session_status(session_id: str) -> StatusResponse:
-    session = await _get_session_or_404(session_id)
+async def session_status(
+    request: Request,
+    session_id: str,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> StatusResponse:
+    session = await _get_session_or_404(session_id, _scoped(request, x_profile_id))
     return StatusResponse(**session.to_status_dict())
 
 
 @router.post("/latex/{session_id}/rerender", response_model=RerenderResponse)
-async def rerender(session_id: str, body: RerenderRequest) -> RerenderResponse:
+async def rerender(
+    request: Request,
+    session_id: str,
+    body: RerenderRequest,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> RerenderResponse:
     """Apply a custom changes map to the original parsed resume and re-render."""
+
+    scoped_profile_id = _scoped(request, x_profile_id)
     from latex_resume.engine import reconstruct
 
-    session = await _get_session_or_404(session_id)
+    session = await _get_session_or_404(session_id, scoped_profile_id)
 
     async with session.lock:
         recon = reconstruct(session.parse_result, body.changes)
@@ -172,7 +201,12 @@ async def rerender(session_id: str, body: RerenderRequest) -> RerenderResponse:
 
 
 @router.delete("/latex/{session_id}", status_code=204)
-async def delete_session(session_id: str) -> None:
+async def delete_session(
+    request: Request,
+    session_id: str,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> None:
+    await _get_session_or_404(session_id, _scoped(request, x_profile_id))
     existed = await store.delete(session_id)
     if not existed:
         raise HTTPException(404, f"Session '{session_id}' not found.")
@@ -195,9 +229,16 @@ async def analyze_resume(body: AnalyzeRequest) -> AnalyzeResponse:
 
 
 @router.post("/latex/{session_id}/refine", response_model=OptimizeResponse)
-async def refine_session(session_id: str, body: RefineRequest) -> OptimizeResponse:
+async def refine_session(
+    request: Request,
+    session_id: str,
+    body: RefineRequest,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> OptimizeResponse:
     """Apply a chat-style instruction to an uploaded resume session."""
-    session = await _get_session_or_404(session_id)
+
+    scoped_profile_id = _scoped(request, x_profile_id)
+    session = await _get_session_or_404(session_id, scoped_profile_id)
     latex_source = body.latex_source or session.latex_source
     job_keywords = body.job_keywords or extract_job_keywords_fast(body.job_description)
 
@@ -242,9 +283,15 @@ async def refine_session(session_id: str, body: RefineRequest) -> OptimizeRespon
 
 
 @router.get("/latex/{session_id}/report", response_model=ReportResponse)
-async def session_report(session_id: str) -> ReportResponse:
+async def session_report(
+    request: Request,
+    session_id: str,
+    x_profile_id: str | None = Header(default=None, alias="X-Profile-Id"),
+) -> ReportResponse:
     """Return optimization analytics for a completed session."""
-    session = await _get_session_or_404(session_id)
+
+    scoped_profile_id = _scoped(request, x_profile_id)
+    session = await _get_session_or_404(session_id, scoped_profile_id)
     opt = session.optimization_result
     if opt is None:
         return ReportResponse(run_record=None, optimized=False)
