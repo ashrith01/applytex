@@ -1594,7 +1594,17 @@ def create_app(
     job_search_service: JobSearchService | None = None,
     application_store: ApplicationStore | None = None,
 ) -> FastAPI:
-    from latex_resume.routers import applications, auth, extension, jobs, latex, profiles, tailor, watchlist
+    from latex_resume.routers import (
+        applications,
+        apply_runs,
+        auth,
+        extension,
+        jobs,
+        latex,
+        profiles,
+        tailor,
+        watchlist,
+    )
     from latex_resume.watchlist import WatchlistIngestor
 
     app = FastAPI(
@@ -1662,6 +1672,7 @@ def create_app(
     app.include_router(latex.router)
     app.include_router(tailor.router)
     app.include_router(watchlist.router)
+    app.include_router(apply_runs.router)
 
     return app
 

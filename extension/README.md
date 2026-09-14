@@ -91,6 +91,34 @@ after filling or when the form structure changes. Empty dropdown placeholders
 are counted as unanswered. Selections must match a unique available choice;
 ambiguous and unavailable answers stay in the review checklist.
 
+## Local executor (apply without opening the ATS yourself)
+
+`scripts/executor.mjs` is a Playwright worker that runs **on your machine** in
+a dedicated Chrome profile (`.applytex/browser-profile`, separate from your
+daily browser). It injects these same panel scripts into the employer page with
+a `chrome.*` shim, drives the panel's reviewed fill, and pauses with a
+screenshot. It clicks the employer's Submit button **only** after you approve
+the paused run in the API, which mints a one-time approval token the executor
+must present to record the receipt.
+
+```bash
+node scripts/executor.mjs --profile <your_profile_id>          # keep running while you apply
+curl -X POST localhost:8000/applications/<id>/apply-runs        # or from the feed / tracker
+curl localhost:8000/apply-runs                                  # queued / paused_for_review / awaiting_input
+curl -X POST localhost:8000/apply-runs/<run>/approve            # after reviewing the screenshot
+```
+
+Sign-in walls, CAPTCHAs and MFA are never bypassed: the run pauses as
+`awaiting_input`, you finish the step in the executor's browser window, then
+`POST /apply-runs/<run>/resume`. Unresolved required questions pause the same
+way; answer them (answers bank or extension) and resume. Only Greenhouse, Lever
+and Ashby run without `--allow-provider`. `APPLYTEX_EXECUTOR_DAILY_CAP`
+(default 20) bounds runs per day. Sending this to a hosted service is out of
+scope by design.
+
+`node scripts/executor_lab_qa.mjs` proves the loop against the synthetic lab:
+enqueue → fill → pause → approve → submit → receipt.
+
 ## Synthetic application lab
 
 Run `uv run python scripts/autofill_lab.py` from the repository root and open
