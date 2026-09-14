@@ -696,14 +696,21 @@ def _validate_startup(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    from latex_resume.watchlist import refresh_loop
+
     _validate_startup(app)
-    task = asyncio.create_task(_session_cleanup_loop())
+    tasks = [
+        asyncio.create_task(_session_cleanup_loop()),
+        asyncio.create_task(refresh_loop(app.state.watchlist_ingestor)),
+    ]
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def _deep_merge_profile_dict(current: dict[str, object], updates: dict[str, object]) -> dict[str, object]:
@@ -1587,7 +1594,8 @@ def create_app(
     job_search_service: JobSearchService | None = None,
     application_store: ApplicationStore | None = None,
 ) -> FastAPI:
-    from latex_resume.routers import applications, auth, extension, jobs, latex, profiles, tailor
+    from latex_resume.routers import applications, auth, extension, jobs, latex, profiles, tailor, watchlist
+    from latex_resume.watchlist import WatchlistIngestor
 
     app = FastAPI(
         title="ApplyTeX ATS API",
@@ -1606,6 +1614,11 @@ def create_app(
     app.state.job_search_service = job_search_service or JobSearchService()
     app.state.application_store = application_store or ApplicationStore(default_db_path)
     app.state.auth_store = LocalAuthStore(app.state.application_store)
+    # Test doubles may stub the search service without exposing a board client.
+    app.state.watchlist_ingestor = WatchlistIngestor(
+        app.state.application_store,
+        board_client=getattr(app.state.job_search_service, "board_client", None),
+    )
     tailor_store.bind(app.state.application_store)
     install_auth_middleware(app, app.state.auth_store)
     app.state.limiter = limiter
@@ -1648,6 +1661,7 @@ def create_app(
     app.include_router(extension.router)
     app.include_router(latex.router)
     app.include_router(tailor.router)
+    app.include_router(watchlist.router)
 
     return app
 

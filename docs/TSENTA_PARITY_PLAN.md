@@ -240,9 +240,23 @@ The frontend answers-bank page (item 5) is deferred with the rest of the UI.
    non-Workday providers (`panel.js:5511`).
 5. Frontend: answers-bank page under Profile with per-row "last used on".
 
-### Phase 2 — Passive discovery (4–5 days)
+### Phase 2 — Passive discovery (4–5 days) — **implemented 2026-09-13**
 
 Replaces "type a board token" with "new matches since yesterday".
+
+Implementation notes: `WatchlistEntry` / `IngestionRun` models and tables;
+`watchlist.py` ingestor (concurrent board fetch, preference filter, resume
+fit score, `first_seen_at` preserved across refreshes, per-board error and
+count bookkeeping); lifespan scheduler; `/watchlist*` routes and
+`GET /jobs/feed`; `applytex-watchlist` CLI with a markdown digest
+(`--markdown auto` → `.applytex/feed/<date>.md`). The bundled seed
+(`data/watchlist_seed.json`) holds 103 boards verified live on 2026-09-13,
+tagged by domain (`robotics`, `autonomous_driving`, `llm`, `ml_infra`,
+`agents`, `product`, …). Aurora, Applied Intuition, Boston Dynamics, Groq,
+Cruise, Rippling and a few others expose no public board API and stay
+capture-only. SmartRecruiters / Workday-JSON sources and the daily digest
+notification are deferred; the feed UI is CLI + API until the frontend work
+resumes.
 
 1. **Watchlist + ingestion tables:** `watchlist(profile_id, provider,
    board_token, company, domain_tags[], enabled)`, `ingestion_runs(run_id,

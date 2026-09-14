@@ -228,6 +228,11 @@ class JobSearchService:
     def __init__(self, board_client: PublicJobBoardClient | None = None) -> None:
         self._board_client = board_client or PublicJobBoardClient()
 
+    @property
+    def board_client(self) -> PublicJobBoardClient:
+        """Shared fetcher so the watchlist ingestor honors test doubles too."""
+        return self._board_client
+
     async def search(
         self,
         query: JobSearchQuery,

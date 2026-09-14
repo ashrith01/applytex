@@ -32,6 +32,26 @@ class JobProvider(str, Enum):
     DICE = "dice"
 
 
+PUBLIC_BOARD_PROVIDERS: frozenset[JobProvider] = frozenset(
+    {JobProvider.GREENHOUSE, JobProvider.LEVER, JobProvider.ASHBY}
+)
+
+
+def validate_board_token(value: str) -> str:
+    """Reject tokens that could alter a provider URL."""
+    cleaned = value.strip()
+    if not cleaned.replace("-", "").replace("_", "").isalnum():
+        raise ValueError("board_token may contain only letters, numbers, hyphens, and underscores")
+    return cleaned
+
+
+def require_public_board_provider(value: JobProvider) -> JobProvider:
+    """Keep providers without public board adapters in the user-visible extension."""
+    if value not in PUBLIC_BOARD_PROVIDERS:
+        raise ValueError(f"{value.value} jobs must be captured through the Chrome extension")
+    return value
+
+
 class JobSourceConfig(BaseModel):
     """Configuration for one public employer job board."""
 
@@ -43,31 +63,12 @@ class JobSourceConfig(BaseModel):
     @field_validator("board_token")
     @classmethod
     def validate_board_token(cls, value: str) -> str:
-        """Reject tokens that could alter a provider URL."""
-        cleaned = value.strip()
-        if not cleaned.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("board_token may contain only letters, numbers, hyphens, and underscores")
-        return cleaned
+        return validate_board_token(value)
 
     @field_validator("provider")
     @classmethod
     def reject_browser_only_provider(cls, value: JobProvider) -> JobProvider:
-        """Keep providers without public board adapters in the user-visible extension."""
-        browser_only = {
-            JobProvider.LINKEDIN,
-            JobProvider.WORKDAY,
-            JobProvider.ICIMS,
-            JobProvider.SMARTRECRUITERS,
-            JobProvider.WORKABLE,
-            JobProvider.INDEED,
-            JobProvider.ZIPRECRUITER,
-            JobProvider.GLASSDOOR,
-            JobProvider.WELLFOUND,
-            JobProvider.DICE,
-        }
-        if value in browser_only:
-            raise ValueError(f"{value.value} jobs must be captured through the Chrome extension")
-        return value
+        return require_public_board_provider(value)
 
 
 class TargetRole(str, Enum):
@@ -146,6 +147,13 @@ class JobPosting(BaseModel):
     employment_track: Literal["internship", "full_time", "unknown"] = "unknown"
     search_score: float = Field(default=0.0, ge=0.0)
     captured_for_profile_id: str | None = None
+    # Watchlist feed fields. ``first_seen_at`` survives re-ingestion so "new
+    # since" queries stay stable; ``fit_score`` is the deterministic ATS fit
+    # against the profile resume at ingestion time.
+    first_seen_at: str | None = None
+    fit_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    watchlist_entry_id: str | None = None
+    domain_tags: list[str] = Field(default_factory=list)
 
 
 class SourceSearchError(BaseModel):
@@ -165,6 +173,65 @@ class JobSearchResult(BaseModel):
     jobs: list[JobPosting]
     errors: list[SourceSearchError] = Field(default_factory=list)
     created_at: str = Field(default_factory=utc_now)
+
+
+class WatchlistEntry(BaseModel):
+    """One employer board a profile follows for scheduled discovery."""
+
+    entry_id: str
+    profile_id: str = "default"
+    provider: JobProvider
+    board_token: str = Field(min_length=1, max_length=120)
+    company: str = Field(min_length=1, max_length=160)
+    domain_tags: list[str] = Field(default_factory=list, max_length=12)
+    enabled: bool = True
+    last_checked_at: str | None = None
+    last_error: str = ""
+    last_job_count: int = Field(default=0, ge=0)
+    last_matched_count: int = Field(default=0, ge=0)
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+
+    @field_validator("board_token")
+    @classmethod
+    def _validate_board_token(cls, value: str) -> str:
+        return validate_board_token(value)
+
+    @field_validator("provider")
+    @classmethod
+    def _require_public_provider(cls, value: JobProvider) -> JobProvider:
+        return require_public_board_provider(value)
+
+    @field_validator("domain_tags", mode="before")
+    @classmethod
+    def _clean_tags(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return list(dict.fromkeys(str(tag).strip().casefold() for tag in value if str(tag).strip()))
+
+    def to_source(self) -> JobSourceConfig:
+        return JobSourceConfig(
+            provider=self.provider,
+            board_token=self.board_token,
+            company=self.company,
+            industry=self.domain_tags[0] if self.domain_tags else None,
+        )
+
+
+class IngestionRun(BaseModel):
+    """One watchlist refresh: what was fetched, matched, and newly seen."""
+
+    run_id: str
+    profile_id: str = "default"
+    trigger: Literal["scheduled", "manual", "cli"] = "manual"
+    started_at: str = Field(default_factory=utc_now)
+    finished_at: str | None = None
+    source_count: int = 0
+    fetched_jobs: int = 0
+    matched_jobs: int = 0
+    new_jobs: int = 0
+    updated_jobs: int = 0
+    errors: list[SourceSearchError] = Field(default_factory=list)
 
 
 class ApplicationStatus(str, Enum):
