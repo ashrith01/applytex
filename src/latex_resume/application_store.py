@@ -29,6 +29,7 @@ from latex_resume.job_models import (
     ProjectRecord,
     ProjectSource,
     SavedAnswer,
+    SubmissionBundle,
     WatchlistEntry,
     utc_now,
 )
@@ -271,6 +272,14 @@ class ApplicationStore:
                     profile_id TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     started_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS submission_bundles (
+                    bundle_id TEXT PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_jobs_watchlist
@@ -1151,6 +1160,93 @@ class ApplicationStore:
             ).fetchone()
         return FormScan.model_validate_json(row["payload_json"]) if row else None
 
+    def list_form_scans(self, application_id: str, limit: int = 200) -> list[FormScan]:
+        """Every scan for one application, oldest first (multi-step flows produce several)."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM form_scans
+                WHERE application_id = ?
+                ORDER BY captured_at ASC
+                LIMIT ?
+                """,
+                (application_id, max(1, limit)),
+            ).fetchall()
+        return [FormScan.model_validate_json(row["payload_json"]) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Submission receipts (insert-only)
+    # ------------------------------------------------------------------
+
+    def save_submission_bundle(self, bundle: SubmissionBundle) -> SubmissionBundle:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO submission_bundles
+                    (bundle_id, application_id, profile_id, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (bundle.bundle_id, bundle.application_id, bundle.profile_id, bundle.model_dump_json(), bundle.created_at),
+            )
+        return bundle
+
+    def get_submission_bundle(self, application_id: str) -> SubmissionBundle | None:
+        """Latest receipt for an application, if it was ever confirmed submitted."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM submission_bundles
+                WHERE application_id = ? ORDER BY created_at DESC LIMIT 1
+                """,
+                (application_id,),
+            ).fetchone()
+        return SubmissionBundle.model_validate_json(row["payload_json"]) if row else None
+
+    def list_due_tasks(
+        self,
+        profile_id: str,
+        *,
+        due_before: str,
+        limit: int = 100,
+    ) -> list[tuple[ApplicationTask, ApplicationRecord]]:
+        """Open tasks with a due date at or before ``due_before`` for one profile."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT t.payload_json AS task_json, a.payload_json AS application_json
+                FROM application_tasks t
+                JOIN applications a ON a.application_id = t.application_id
+                WHERE t.status = 'open' AND t.due_at IS NOT NULL AND t.due_at <= ?
+                  AND json_extract(a.payload_json, '$.profile_id') = ?
+                ORDER BY t.due_at ASC
+                LIMIT ?
+                """,
+                (due_before, profile_id, max(1, limit)),
+            ).fetchall()
+        return [
+            (
+                ApplicationTask.model_validate_json(row["task_json"]),
+                ApplicationRecord.model_validate_json(row["application_json"]),
+            )
+            for row in rows
+        ]
+
+    def complete_application_task(self, task_id: str) -> ApplicationTask:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM application_tasks WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown task_id: {task_id}")
+            task = ApplicationTask.model_validate_json(row["payload_json"])
+            done = task.model_copy(update={"status": "done", "completed_at": utc_now()})
+            connection.execute(
+                "UPDATE application_tasks SET payload_json = ?, status = ? WHERE task_id = ?",
+                (done.model_dump_json(), done.status, task_id),
+            )
+        return done
+
     def get_latest_form_scan(self, application_id: str) -> FormScan | None:
         """Return the latest scan for one application, if any."""
         with self._lock, self._connect() as connection:
@@ -1216,6 +1312,11 @@ class ApplicationStore:
                 app_updates["stage"] = ApplicationStage.TAILORING
             if updated.status is ApplicationArtifactStatus.UPLOADED:
                 app_updates["stage"] = ApplicationStage.FORM_REVIEW
+        elif updated.type is ApplicationArtifactType.COVER_LETTER and updated.status in {
+            ApplicationArtifactStatus.APPROVED,
+            ApplicationArtifactStatus.UPLOADED,
+        }:
+            app_updates["cover_letter_artifact_id"] = updated.artifact_id
         if app_updates:
             self.update_application(updated.application_id, app_updates)
         return updated

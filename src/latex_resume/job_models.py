@@ -368,6 +368,59 @@ class ApplicationRecord(BaseModel):
     approved_at: str | None = None
     applied_at: str | None = None
     submitted_at: str | None = None
+    submission_bundle_id: str | None = None
+
+
+class SubmissionField(BaseModel):
+    """One form field as it stood when the submission was confirmed."""
+
+    field_id: str
+    label: str
+    step_key: str = ""
+    required: bool = False
+    input_type: str = ""
+    value: str | bool | list[str] | None = None
+    source: str = ""
+
+
+class SubmissionStep(BaseModel):
+    scan_id: str
+    step_key: str = ""
+    page_url: str = ""
+    captured_at: str = ""
+    field_count: int = 0
+
+
+class SubmissionBundle(BaseModel):
+    """Immutable receipt: exactly what was on the forms and which files were attached.
+
+    Written once when the user confirms a submission. Later profile, resume,
+    or answer edits never change it.
+    """
+
+    bundle_id: str
+    application_id: str
+    profile_id: str = "default"
+    job_id: str
+    job_title: str = ""
+    company: str = ""
+    provider: str = ""
+    apply_url: str = ""
+    source_url: str = ""
+    job_description_sha256: str = ""
+    resume_artifact_id: str | None = None
+    resume_filename: str = ""
+    resume_sha256: str = ""
+    resume_origin: Literal["tailored_artifact", "profile_resume", "none"] = "none"
+    cover_letter_artifact_id: str | None = None
+    cover_letter_filename: str = ""
+    cover_letter_sha256: str = ""
+    fields: list[SubmissionField] = Field(default_factory=list)
+    steps: list[SubmissionStep] = Field(default_factory=list)
+    confirmed_by: Literal["user", "detected_confirmed"] = "user"
+    detection_evidence: str = ""
+    notes: str = ""
+    created_at: str = Field(default_factory=utc_now)
 
 
 class ApplicationArtifact(BaseModel):
@@ -382,6 +435,9 @@ class ApplicationArtifact(BaseModel):
     filename: str = ""
     mime_type: str = "application/pdf"
     latex_source: str = ""
+    # Cover letters keep their reviewed text here; the PDF is rendered on approve.
+    text_content: str = ""
+    evidence_notes: list[str] = Field(default_factory=list)
     pdf_b64: str = ""
     pdf_path: str = ""
     pdf_size_bytes: int = 0
