@@ -34,9 +34,17 @@ def auth_required() -> bool:
     }
 
 
-def _hash_secret(value: str, *, salt: str = "") -> str:
-    material = f"{salt}:{value}".encode()
-    return hashlib.sha256(material).hexdigest()
+def _hash_secret(value: str, *, salt: str) -> str:
+    """Derive a hex digest using scrypt (memory-hard, GPU-resistant)."""
+    dk = hashlib.scrypt(
+        value.encode(),
+        salt=salt.encode(),
+        n=2**14,
+        r=8,
+        p=1,
+        dklen=32,
+    )
+    return dk.hex()
 
 
 @dataclass
@@ -58,15 +66,22 @@ class LocalAuthStore:
     def set_password(self, profile_id: str, password: str) -> None:
         if len(password) < 8:
             raise ValueError("Password must be at least 8 characters.")
-        salt = secrets.token_hex(8)
+        salt = secrets.token_hex(16)
         digest = _hash_secret(password, salt=salt)
-        self._store.set_setting(f"auth.password.{profile_id}", f"{salt}:{digest}")
+        # Format: "scrypt:{salt}:{digest}"
+        self._store.set_setting(f"auth.password.{profile_id}", f"scrypt:{salt}:{digest}")
 
     def verify_password(self, profile_id: str, password: str) -> bool:
         raw = self._store.get_setting(f"auth.password.{profile_id}")
-        if not raw or ":" not in raw:
+        if not raw:
             return False
-        salt, expected = raw.split(":", 1)
+        # Only accept scrypt-format hashes; old SHA-256 entries are rejected.
+        if not raw.startswith("scrypt:"):
+            return False
+        parts = raw[len("scrypt:"):].split(":", 1)
+        if len(parts) != 2:
+            return False
+        salt, expected = parts
         actual = _hash_secret(password, salt=salt)
         return hmac.compare_digest(actual, expected)
 

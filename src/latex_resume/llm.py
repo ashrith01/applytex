@@ -35,6 +35,7 @@ Shared contract
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -443,8 +444,14 @@ async def _complete_ollama(
                 logger.error("Ollama HTTP error: %s", exc)
                 raise
             except httpx.RequestError as exc:
-                logger.error("Ollama connection error: %s — is Ollama running?", exc)
-                raise
+                last_error = exc
+                backoff = 2 ** attempt
+                logger.warning(
+                    "Ollama connection error (attempt %d/%d), retrying in %ds: %s — is Ollama running?",
+                    attempt + 1, 1 + retries, backoff, exc,
+                )
+                if attempt < retries:
+                    await asyncio.sleep(backoff)
 
     raise ValueError(
         f"Ollama ({model}) did not return valid JSON after {1 + retries} attempt(s). "

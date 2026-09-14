@@ -3,9 +3,10 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
 interface StatementDiffListProps {
   diffs: StatementDiff[];
+  onHoverChange?: (newText: string | null) => void;
 }
 
-export function StatementDiffList({ diffs }: StatementDiffListProps) {
+export function StatementDiffList({ diffs, onHoverChange }: StatementDiffListProps) {
   if (diffs.length === 0) {
     return <p className="text-sm text-ink-muted">No statement changes yet.</p>;
   }
@@ -13,7 +14,12 @@ export function StatementDiffList({ diffs }: StatementDiffListProps) {
   return (
     <div className="space-y-4">
       {diffs.map((change) => (
-        <Card key={change.stmt_id} className="relative overflow-hidden p-0">
+        <Card
+          key={change.stmt_id}
+          className="relative overflow-hidden p-0"
+          onMouseEnter={() => onHoverChange?.(change.value ?? null)}
+          onMouseLeave={() => onHoverChange?.(null)}
+        >
           <div className="absolute inset-y-0 left-0 w-1 bg-accent" aria-hidden="true" />
           <div className="grid md:grid-cols-[144px_minmax(0,1fr)]">
             <div className="border-b border-border bg-surface-source p-4 pl-5 md:border-b-0 md:border-r">

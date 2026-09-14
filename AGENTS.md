@@ -1,6 +1,7 @@
-# AGENTS.md — LaTeX Resume Matcher
+# AGENTS.md — ApplyTeX
 
-> Context file for Codex. This repo is a standalone sibling of `Resume-Matcher`.
+> Context file for Codex. GitHub: `ashrith01/applytex`; local folder: `applytex`
+> (formerly `latex-resume-matcher`). This repo is a standalone sibling of `Resume-Matcher`.
 > It builds a LaTeX-native resume tailoring engine. The full visual architecture
 > reference lives in `../Resume-Matcher/latex-resume-architecture.html`.
 
@@ -29,9 +30,13 @@ discards the original document and re-renders structured JSON through a template
 6. ENFORCE     page_count > 1  ->  block confirm / suggest layout changes
 ```
 
-Stage 3 (LLM), the local HTTP layer, Streamlit MVP, model routing, tracing, and
-benchmark harness are implemented for local development. SmartJobApply
-persistence, authentication, and production approval workflows are not built yet.
+Stage 3 (LLM), FastAPI, Next.js, the Chrome extension, Streamlit MVP, model
+routing, tracing, and benchmark tooling are implemented for local development.
+SQLite persists profiles, jobs, applications, artifacts, and tailor sessions.
+Optional local authentication and application approval states exist. Classic
+`/latex/*` sessions remain in memory; hosted production hardening and complete
+immutable submission records are still outstanding. See
+`docs/JOBRIGHT_PARITY_PLAN.md` for the current feature inventory and priorities.
 
 ---
 
@@ -72,7 +77,11 @@ persistence, authentication, and production approval workflows are not built yet
 | `src/latex_resume/llm.py` | Wired JSON LLM backends: Groq, Anthropic, Ollama. OpenAI/Gemini are placeholders. |
 | `src/latex_resume/ats.py` | Deterministic keyword/skill match scoring. |
 | `src/latex_resume/session.py` | In-memory FastAPI session store. |
-| `src/latex_resume/api.py` | Local FastAPI upload/optimize/status/rerender/delete routes. |
+| `src/latex_resume/api.py` | FastAPI app factory, request schemas, and shared orchestration helpers. |
+| `src/latex_resume/routers/` | Local auth, profiles, jobs, applications, extension, and tailoring routes. |
+| `src/latex_resume/application_store.py` | SQLite profiles, jobs, applications, artifacts, scans, events, and tasks. |
+| `extension/panel.js`, `extension/panel-*.js` | In-page extension UI, scanning, reviewed fill, profile/resume workspaces. |
+| `frontend/src/app/` | Next.js profile, job, application, Resume Lab, and tailoring pages. |
 
 ---
 
@@ -115,13 +124,12 @@ LaTeX-dependent tests are marked and auto-skip when `pdflatex` is not on PATH.
 ## Roadmap
 
 - **Increment 1 (done):** core engine — parse, classify, reconstruct, render, one-page check.
-- **Increment 2 (MVP):** LLM optimization, skill confirmation, JD extraction,
-  recruiter review, Streamlit UI, FastAPI routes, tracing, and benchmark tooling
-  exist for local development. Remaining work: persistence, authentication,
-  production hardening, durable approval states, and optional direct
-  OpenAI/Gemini backend implementations.
-- **Increment 3:** Next.js frontend — side-by-side PDF.js view, layout controls, SyncTeX
-  hover-highlight overlay (green box per changed statement).
+- **Increment 2 (local MVP):** LLM optimization, skill confirmation, JD extraction,
+  recruiter review, API, SQLite persistence, local auth, extension, and tracking exist.
+- **Increment 3 (in progress):** Next.js frontend and PDF/diff review exist; production
+  hardening, immutable submission snapshots, full cover-letter workflow, resume
+  library, and broader job intelligence remain. Full SyncTeX hover overlays and
+  direct OpenAI/Gemini tailoring backends remain optional work.
 
 ---
 

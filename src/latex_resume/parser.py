@@ -88,7 +88,8 @@ def _read_braced(tex: str, open_idx: int) -> tuple[str, int]:
 
     Returns the inner content and the index immediately after the closing brace.
     """
-    assert tex[open_idx] == "{"
+    if tex[open_idx] != "{":
+        raise ValueError(f"Expected '{{' at index {open_idx}, got {tex[open_idx]!r}")
     depth = 0
     i = open_idx
     n = len(tex)

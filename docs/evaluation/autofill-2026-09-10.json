@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-10",
+  "baseline_commit": "cd0737eb3aa3cb90b3e8d2fc3515b68a1dfed79b",
+  "working_tree": "Uncommitted autofill increment on top of the baseline",
+  "dataset": "Fictional Avery Morgan profile; complete, edge-cases and multi-step synthetic forms",
+  "runtime": "real panel scripts with lab-only Chrome message transport and reserved test URLs",
+  "run_started_at": "2026-09-10T16:40:09.537Z",
+  "run_completed_at": "2026-09-10T16:41:40.156Z",
+  "python_suite": {
+    "passed": 344,
+    "failed": 0
+  },
+  "browser_lab": {
+    "passed": 39,
+    "failed": 0,
+    "assertions": 1583,
+    "command": "node scripts/autofill_lab_qa.mjs"
+  },
+  "provider_regression": {
+    "passed_before_last_fix": 12,
+    "failed_before_last_fix": 1,
+    "targeted_workday_after_fix": "passed; no browser errors",
+    "note": "Combined 13-provider fixture evidence; not a single fresh all-provider run after the last reporting fix."
+  },
+  "platforms": [
+    {
+      "provider": "ashby",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 124
+    },
+    {
+      "provider": "dice",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "glassdoor",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "greenhouse",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "icims",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "indeed",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "lever",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "linkedin",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "smartrecruiters",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "wellfound",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "workable",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    },
+    {
+      "provider": "workday",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 128
+    },
+    {
+      "provider": "ziprecruiter",
+      "cases": 3,
+      "passed": 3,
+      "assertions": 121
+    }
+  ],
+  "limits": [
+    "Synthetic assertions are not real-world accuracy estimates.",
+    "Shared lab forms are not independent employer templates.",
+    "No employer application was submitted.",
+    "Chrome manifest injection and service-worker lifecycle are not exercised by the lab.",
+    "Full live Jobright autofill comparison remains pending specific data/destination approval."
+  ]
+}

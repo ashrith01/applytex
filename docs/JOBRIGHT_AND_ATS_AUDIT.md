@@ -2,6 +2,9 @@
 
 Audit date: 2026-07-18
 
+> Historical audit. See [the September 9 comparison and plan](JOBRIGHT_PARITY_PLAN.md)
+> for current live observations, repository status, feature gaps, and priorities.
+
 ## Outcome
 
 ApplyTeX now has code-level support for 13 providers and a reviewed autofill

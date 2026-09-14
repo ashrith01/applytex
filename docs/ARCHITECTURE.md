@@ -87,14 +87,26 @@ score from a commercial ATS.
 
 ## Runtime And Persistence
 
-Resume optimization sessions remain in process memory. Public job searches and
-application workflow states are persisted in local SQLite. Optimization runs can
-additionally write local JSONL analytics, and LangSmith tracing is optional.
-Persistent user accounts and durable resume-version records remain future work.
+Classic `/latex/*` optimization sessions remain in process memory and are lost
+on restart. Guided tailor sessions, public job searches, captured jobs,
+application workflow state, artifacts, events, tasks, candidate profiles, and
+form scans are persisted in local SQLite (`.applytex/applytex.db`).
+Optimization runs can additionally write local JSONL analytics, and LangSmith
+tracing is optional. Durable auth tokens, resume-version records, and a
+submission receipt remain future work.
+
+The HTTP layer is `api.py` (app factory, shared schemas and helpers) plus
+`routers/` (latex, tailor, profiles, jobs, applications, extension, auth).
+Profile ownership is enforced in `routers/_deps.py`; cross-profile reads return
+404.
 
 The application state machine requires an explicit `approved` state before
-`submitting`. Browser form scanning and submission are not part of the current
-phase.
+`submitting`. The Chrome extension scans the user-opened application page,
+builds a reviewed fill plan through `/extension/forms/*`, and fills known fields
+after a separate user click. It never clicks the final Submit button; final
+submission is a manual browser action. See
+[JOB_AUTOMATION_ARCHITECTURE.md](JOB_AUTOMATION_ARCHITECTURE.md) and
+[TSENTA_PARITY_PLAN.md](TSENTA_PARITY_PLAN.md) for the planned executor.
 
 ## Trust Boundaries
 

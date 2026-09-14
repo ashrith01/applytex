@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import sqlite3
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -854,9 +856,9 @@ def test_workday_date_components_current_flags_and_skill_search() -> None:
     actions = resolve_form_questions(questions, profile, employment_track="full_time")
 
     assert [action.value for action in actions] == [
-        "08",
+        "August",
         "2024",
-        "08",
+        "August",
         "2025",
         True,
         False,
@@ -981,7 +983,7 @@ def test_upload_status_rerender_and_delete() -> None:
         assert rerender_body["page_count"] == 1
 
         deleted = client.delete(f"/latex/{session_id}")
-        assert deleted.status_code == 200
+        assert deleted.status_code == 204
         assert client.get(f"/latex/{session_id}/status").status_code == 404
 
 
@@ -1456,6 +1458,7 @@ def test_workday_application_questions_plan_keeps_all_fields_and_typed_answers(
                 "page_title": "Application Questions",
                 "step_key": "Application Questions",
                 "form_signature": "workday:application-questions:11:abc123",
+                "replace_existing": True,
                 "questions": questions,
             },
         )
@@ -1740,6 +1743,7 @@ def test_workday_fill_plan_replaces_conflicts_but_keeps_exact_values(tmp_path: P
             json={
                 "provider": "workday",
                 "page_url": "https://example.myworkdayjobs.com/apply",
+                "replace_existing": True,
                 "questions": [
                     {
                         "field_id": "school",
@@ -1984,6 +1988,54 @@ def test_patch_profile_deep_merges_equal_opportunity(tmp_path: Path) -> None:
         assert eeo["disability"] == "No"
 
 
+def test_patch_profile_section_preserves_nested_facts_and_resume_payloads(
+    tmp_path: Path,
+) -> None:
+    app = create_app(application_store=ApplicationStore(tmp_path / "profile-section-patch.db"))
+    with TestClient(app) as client:
+        base = client.get("/profile?profile_id=section-test").json()
+        base["profile_id"] = "section-test"
+        base["resume_latex_source"] = "\\documentclass{article}"
+        base["resume_pdf_b64"] = "JVBERi0xLjQK"
+        base["application_facts"] = {
+            "is_at_least_18": None,
+            "willing_to_relocate": None,
+            "willing_to_travel": None,
+            "active_non_compete_or_non_solicit": None,
+            "company_relationships": {
+                "Example, Inc.": {
+                    "currently_employed": False,
+                    "employed_by_affiliate": False,
+                    "previously_employed": True,
+                }
+            },
+            "compensation_preferences": [
+                {
+                    "application_id": None,
+                    "employment_type": "internship",
+                    "amount": "35",
+                    "currency": "USD",
+                    "period": "hourly",
+                }
+            ],
+        }
+        assert client.put("/profile", json=base).status_code == 200
+
+        patched = client.patch(
+            "/profile?profile_id=section-test",
+            json={"application_facts": {"is_at_least_18": True}},
+        )
+        assert patched.status_code == 200
+        facts = patched.json()["application_facts"]
+        assert facts["is_at_least_18"] is True
+        assert facts["company_relationships"]["Example, Inc."]["previously_employed"] is True
+        assert facts["compensation_preferences"][0]["amount"] == "35"
+
+        stored = client.get("/profile?profile_id=section-test").json()
+        assert stored["resume_latex_source"] == "\\documentclass{article}"
+        assert stored["resume_pdf_b64"] == "JVBERi0xLjQK"
+
+
 def test_application_detail_tracks_events_tasks_and_artifacts(tmp_path: Path) -> None:
     store = ApplicationStore(tmp_path / "tracker.db")
     job = JobPosting(
@@ -2192,3 +2244,104 @@ def test_application_routes_enforce_profile_ownership_without_auth(tmp_path: Pat
             ).status_code
             == 200
         )
+
+
+# ---------------------------------------------------------------------------
+# /latex/optimize — end-to-end integration test with mocked LLM pipeline
+# ---------------------------------------------------------------------------
+
+
+def _make_stub_optimization_result(parse_result):
+    """Build a minimal OptimizationResult that the /latex/optimize route can serialize."""
+    from latex_resume.optimizer import OptimizationResult
+    from latex_resume.renderer import RenderResult
+
+    stmt_id = next(iter(parse_result.stmt_index))
+    original = parse_result.stmt_index[stmt_id].original_text
+
+    result = OptimizationResult()
+    result.modified_latex = parse_result.latex_source
+    result.diff = [{"stmt_id": stmt_id, "original": original, "value": original, "reason": "stub"}]
+    result.validated_changes = {stmt_id: original}
+    result.overflow = False
+    result.visual_overflow = False
+    result.page_count = 1
+    result.ats_target_score = 70.0
+    result.ats_target_met = True
+    result.confirmation_required_skills = []
+    result.confirmed_skills = []
+    result.strategy_notes = "stub"
+    return result
+
+
+def test_optimize_endpoint_returns_diff_with_mocked_pipeline() -> None:
+    """POST /latex/optimize returns a valid OptimizeResponse when the LLM pipeline is mocked."""
+    sample = SAMPLE_PATH.read_bytes()
+
+    with TestClient(create_app()) as client:
+        # Step 1: upload a .tex file to get a session_id.
+        uploaded = client.post(
+            "/latex/upload",
+            files={"file": ("sample_resume.tex", sample, "text/plain")},
+        )
+        assert uploaded.status_code == 200
+        session_id = uploaded.json()["session_id"]
+
+        # Step 2: mock run_optimization_pipeline in the latex router.
+        async def fake_pipeline(parse_result, job_description, **kwargs):
+            return _make_stub_optimization_result(parse_result)
+
+        with patch(
+            "latex_resume.routers.latex.run_optimization_pipeline",
+            side_effect=fake_pipeline,
+        ):
+            response = client.post(
+                "/latex/optimize",
+                json={
+                    "session_id": session_id,
+                    "job_description": "We need a Python backend engineer with FastAPI and Docker experience.",
+                },
+            )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["session_id"] == session_id
+    assert isinstance(body["diff"], list)
+    assert len(body["diff"]) > 0
+    assert body["overflow"] is False
+    assert body["page_count"] == 1
+    assert body["ats_target_met"] is True
+    assert "modified_latex" in body
+
+
+def test_optimize_endpoint_rejects_empty_job_description() -> None:
+    """POST /latex/optimize with a blank job_description returns 422 (Pydantic validation)."""
+    sample = SAMPLE_PATH.read_bytes()
+
+    with TestClient(create_app()) as client:
+        uploaded = client.post(
+            "/latex/upload",
+            files={"file": ("sample_resume.tex", sample, "text/plain")},
+        )
+        session_id = uploaded.json()["session_id"]
+
+        response = client.post(
+            "/latex/optimize",
+            json={"session_id": session_id, "job_description": ""},
+        )
+
+    assert response.status_code == 422
+
+
+def test_optimize_endpoint_rejects_missing_session() -> None:
+    """POST /latex/optimize with an unknown session_id returns 404."""
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/latex/optimize",
+            json={
+                "session_id": "does-not-exist",
+                "job_description": "Python engineer needed.",
+            },
+        )
+
+    assert response.status_code == 404

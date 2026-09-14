@@ -17,12 +17,21 @@ dependencies = [
     "groq>=1.5.0",
     "requests>=2.34.2",
     "python-dotenv>=1.0",
-    "streamlit>=1.59.1",
     "langsmith>=0.10.1",
+    "slowapi>=0.1.9",
+    "structlog>=24.1.0",
     "openai-codex>=0.1.0b3,<0.2; python_version < '3.14' and sys_platform != 'win32'",
     "langchain-core>=1.4.9",
     "langchain-openai>=1.3.4",
     "langchain-ollama>=1.1.0",
+]
+
+[project.optional-dependencies]
+ui = [
+    "streamlit>=1.59.1",
+]
+all = [
+    "streamlit>=1.59.1",
 ]
 
 [project.scripts]
@@ -50,7 +59,7 @@ packages = ["src/latex_resume"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.uv]
 prerelease = "allow"

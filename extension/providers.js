@@ -65,7 +65,7 @@
       afterCaptureTab: "Application",
       selectors: {
         title: ["h1", "[data-testid='job-title']", "[class*='job-title' i]"],
-        company: ["meta[property='og:site_name']", "[class*='company' i]", "header"],
+        company: ["meta[property='og:site_name']", "[class*='company-name' i]", "[data-testid='company-name']"],
         location: ["[class*='location' i]", "[data-testid='location']"],
         description: ["main", "[data-testid='job-description']", "[class*='description' i]"],
       },
@@ -91,7 +91,7 @@
       hostPermissions: ["https://*.icims.com/*"],
       selectors: {
         title: ["h1", ".iCIMS_Header h1", "[class*='job-title' i]", "[data-testid='job-title']"],
-        company: ["meta[property='og:site_name']", "[class*='company' i]", "header"],
+        company: ["meta[property='og:site_name']", "[class*='company-name' i]", "[data-testid='company-name']"],
         location: ["[class*='location' i]", ".iCIMS_JobHeaderData"],
         description: [".iCIMS_JobContent", "#job-description", "[class*='description' i]", "main"],
       },
@@ -103,8 +103,15 @@
       suffixes: ["smartrecruiters.com"],
       hostPermissions: ["https://*.smartrecruiters.com/*"],
       selectors: {
-        title: ["h1", "[data-testid='job-title']", "[class*='job-title' i]"],
-        company: ["meta[property='og:site_name']", "[class*='company' i]", "header"],
+        title: ["[data-testid='job-title']", "[class*='job-title' i]", "h1"],
+        company: [
+          "meta[property='og:site_name']",
+          "[data-testid='company-name']",
+          "[data-testid='job-company']",
+          "img[alt*='logo' i]",
+          "[class*='company-name' i]",
+          "[class*='CompanyName' i]",
+        ],
         location: ["[data-testid='job-location']", "[class*='location' i]"],
         description: ["[data-testid='job-description']", "#job-description", "[class*='job-description' i]", "main"],
       },
@@ -118,7 +125,7 @@
       hostPermissions: ["https://apply.workable.com/*", "https://*.workable.com/*"],
       selectors: {
         title: ["h1", "[data-ui='job-title']", "[class*='job-title' i]"],
-        company: ["meta[property='og:site_name']", "[data-ui='company-name']", "[class*='company' i]", "header"],
+        company: ["meta[property='og:site_name']", "[data-ui='company-name']", "[class*='company-name' i]"],
         location: ["[data-ui='job-location']", "[class*='location' i]"],
         description: ["[data-ui='job-description']", "[class*='job-description' i]", "main"],
       },

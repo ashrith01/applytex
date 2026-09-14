@@ -15,6 +15,7 @@
   const scanParts = globalThis.ApplyTexPanelScan || {};
   const fillParts = globalThis.ApplyTexPanelFill || {};
   const workdayParts = globalThis.ApplyTexPanelWorkday || {};
+  const profileParts = globalThis.ApplyTexPanelProfile || {};
   const FLOW_STORAGE_KEY = shared.FLOW_STORAGE_KEY || "applicationFlows";
   const LOW_CONFIDENCE_CONTEXT_MESSAGE = shared.LOW_CONFIDENCE_CONTEXT_MESSAGE
     || "Open the original job page once, then return here.";
@@ -37,6 +38,7 @@
     activeProfile: null,
     profile: null,
     recordSelections: {},
+    replaceExisting: false,
     backendReady: false,
     job: null,
     applicationId: null,
@@ -52,6 +54,14 @@
     pendingResume: null,
     approvedArtifact: null,
     panelTab: "autofill",
+    workspace: "",
+    workspaceReturnAction: "",
+    profileSection: "personal",
+    profileDraft: null,
+    profileDirty: false,
+    profileErrors: [],
+    profileSaving: false,
+    profileSaveStatus: "",
     scoreError: "",
     contextRestoreSource: "",
     contextWarning: "",
@@ -81,7 +91,9 @@
   window.addEventListener("smartjobapply:open", openPanel);
   window.addEventListener("focus", () => {
     if (!state.initialized || state.needsSignIn || !state.applicationId || state.busy) return;
-    loadApplicationDetail()
+    loadActiveProfile()
+      .then(loadProfileResume)
+      .then(loadApplicationDetail)
       .then(loadApprovedArtifact)
       .then(render)
       .catch(() => {});
@@ -476,10 +488,12 @@
     lastFormFingerprint = formFingerprint(scan);
     const previousSignature = state.scan?.form_signature || "";
     if (state.scan && previousSignature !== scan.form_signature) {
+      state.replaceExisting = false;
       state.lastFillResult = null;
       resetAutomaticAnswerState();
     }
     scan.application_id = state.applicationId;
+    scan.replace_existing = state.replaceExisting;
     const savedScan = await apiRequest("/extension/forms/scan", {
       method: "POST",
       body: JSON.stringify(scan),
@@ -616,6 +630,109 @@
     state.resumeInfo = await apiRequest("/profile/resume");
   }
 
+  function openProfileWorkspace(section = "personal", opener = null) {
+    if (!state.profile || typeof profileParts.renderWorkspace !== "function") {
+      state.error = "Autofill information is unavailable. Reload the extension and try again.";
+      render();
+      return;
+    }
+    state.workspace = "profile";
+    state.workspaceReturnAction = opener?.dataset?.workspaceOrigin || opener?.dataset?.action || "open-autofill-information";
+    state.profileSection = profileParts.SECTIONS?.some((item) => item.id === section) ? section : "personal";
+    state.profileDraft = profileParts.normalizeProfile(state.profile);
+    state.profileDirty = false;
+    state.profileErrors = [];
+    state.profileSaveStatus = "";
+    state.error = "";
+    render();
+    queueMicrotask(() => document.querySelector("#smartjobapply-panel [data-profile-path], #smartjobapply-panel [data-profile-list-path]")?.focus());
+  }
+
+  function openResumeWorkspace(opener = null) {
+    if (typeof profileParts.renderResumeWorkspace !== "function") {
+      state.error = "Resume choices are unavailable. Reload the extension and try again.";
+      render();
+      return;
+    }
+    state.workspace = "resume";
+    state.workspaceReturnAction = opener?.dataset?.workspaceOrigin || opener?.dataset?.action || "open-resume-workspace";
+    state.message = "";
+    state.error = "";
+    render();
+  }
+
+  function confirmLeaveProfileChanges() {
+    return !state.profileDirty || window.confirm("Leave this section without saving your changes?");
+  }
+
+  function closeWorkspace({ restoreFocus = true } = {}) {
+    if (state.workspace === "profile" && !confirmLeaveProfileChanges()) return false;
+    const returnAction = state.workspaceReturnAction;
+    state.workspace = "";
+    state.workspaceReturnAction = "";
+    state.profileDraft = null;
+    state.profileDirty = false;
+    state.profileErrors = [];
+    state.profileSaveStatus = "";
+    render();
+    if (restoreFocus && returnAction) {
+      const selector = returnAction === "account-profile"
+        ? "#smartjobapply-panel .sja-account-menu > summary"
+        : `#smartjobapply-panel [data-workspace-origin='${returnAction}'], #smartjobapply-panel [data-action='${returnAction}']`;
+      queueMicrotask(() => document.querySelector(selector)?.focus());
+    }
+    return true;
+  }
+
+  function switchProfileSection(section) {
+    if (section === state.profileSection) return;
+    if (!confirmLeaveProfileChanges()) return;
+    state.profileSection = section;
+    state.profileDraft = profileParts.normalizeProfile(state.profile);
+    state.profileDirty = false;
+    state.profileErrors = [];
+    state.profileSaveStatus = "";
+    render();
+    queueMicrotask(() => document.querySelector("#smartjobapply-panel [data-profile-path], #smartjobapply-panel [data-profile-list-path]")?.focus());
+  }
+
+  async function saveProfileSection() {
+    if (!state.profileDraft || state.profileSaving) return;
+    const errors = profileParts.validateSection(state.profileSection, state.profileDraft);
+    if (errors.length) {
+      state.profileErrors = errors;
+      state.profileSaveStatus = "";
+      render();
+      return;
+    }
+    state.profileSaving = true;
+    state.profileErrors = [];
+    state.profileSaveStatus = "";
+    render();
+    try {
+      const patch = profileParts.patchForSection(state.profileSection, state.profileDraft);
+      const saved = await apiRequest(`/profile?profile_id=${encodeURIComponent(state.profileId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      state.profile = profileParts.normalizeProfile(saved);
+      state.profileDraft = profileParts.normalizeProfile(saved);
+      state.activeProfile = {
+        ...(state.activeProfile || {}),
+        full_name: saved.full_name || state.activeProfile?.full_name || "",
+        email: saved.email || state.activeProfile?.email || "",
+      };
+      state.profileDirty = false;
+      state.profileSaveStatus = "Saved to your profile.";
+      if (state.job) await rescanAndPlan();
+    } catch (error) {
+      state.profileErrors = [error.message || String(error)];
+    } finally {
+      state.profileSaving = false;
+      render();
+    }
+  }
+
   async function loadApprovedArtifact() {
     if (!state.applicationId) {
       state.approvedArtifact = null;
@@ -680,6 +797,7 @@
     await withBusy("Filling reviewed fields", async () => {
       const result = await fillReviewedFields(state.plan.actions, run);
       state.lastFillResult = result;
+      state.replaceExisting = false;
       await rescanAndPlan();
       finishAutofillRun(run);
       state.message = run.cancelled
@@ -703,6 +821,7 @@
       resetAutofillRunActions(run, orderWorkdayFillActions(state.plan?.actions || []));
       const result = await fillReviewedFields(orderWorkdayFillActions(state.plan?.actions || []), run);
       state.lastFillResult = { ...result, added_records: records.added, record_failures: records.failures };
+      state.replaceExisting = false;
       await rescanAndPlan();
       applyRuntimeFailureStatuses(result);
       const unavailableCount = (result.failed_values || [])
@@ -843,7 +962,7 @@
         .filter(([fieldId]) => !resolvedIds.has(fieldId)),
     );
     const failedValues = rawFailedValues.filter((item) => (
-      !resolvedIds.has(item.field_id) && !resolvedLabels.has(normalizeLabel(item.field))
+      item.field_id ? !resolvedIds.has(item.field_id) : !resolvedLabels.has(normalizeLabel(item.field))
     ));
     if (result === state.lastFillResult) {
       state.lastFillResult = { ...result, field_outcomes: failures, failed_values: failedValues };
@@ -855,8 +974,9 @@
     }));
   }
 
-  async function uploadDefaultResume() {
-    await withBusy(state.approvedArtifact ? "Uploading approved resume" : "Uploading saved resume", async () => {
+  async function uploadDefaultResume(preferApprovedArtifact = true) {
+    const useApproved = Boolean(preferApprovedArtifact && state.approvedArtifact);
+    await withBusy(useApproved ? "Uploading approved resume" : "Uploading saved resume", async () => {
       const prepared = await apiRequest(
         "/extension/resume/prepare",
         {
@@ -865,7 +985,7 @@
             job_description: state.job?.description || "",
             customize: false,
             application_id: state.applicationId,
-            prefer_approved_artifact: true,
+            prefer_approved_artifact: Boolean(preferApprovedArtifact),
           }),
         },
       );
@@ -876,6 +996,8 @@
       }
       await loadApprovedArtifact();
       await rescanAndPlan();
+      state.workspace = "";
+      state.workspaceReturnAction = "";
       state.message = `Uploaded ${prepared.filename}.`;
     });
   }
@@ -1174,6 +1296,29 @@
       root.querySelector("[data-signin-username]")?.focus();
       return;
     }
+    if (state.workspace === "profile") {
+      root.innerHTML = profileParts.renderWorkspace({
+        profile: state.profileDraft || state.profile,
+        section: state.profileSection,
+        errors: state.profileErrors,
+        saving: state.profileSaving,
+        saveStatus: state.profileSaveStatus,
+      });
+      bindEvents(root);
+      return;
+    }
+    if (state.workspace === "resume") {
+      root.innerHTML = profileParts.renderResumeWorkspace({
+        resumeInfo: state.resumeInfo || {},
+        approvedArtifact: state.approvedArtifact,
+        hasJob: Boolean(state.job),
+        busy: state.busy,
+        message: state.message,
+        error: state.error,
+      });
+      bindEvents(root);
+      return;
+    }
     const progress = requiredProgress();
     const review = reviewSummary();
     const pageContext = applicationStepLabel();
@@ -1206,6 +1351,7 @@
             <span aria-hidden="true">⌄</span>
           </summary>
           <div class="sja-account-actions">
+            <button data-action="open-autofill-information" data-workspace-origin="account-profile" type="button">Autofill information</button>
             <button data-action="switch-account" type="button">Switch profile</button>
             <button data-action="open-web-profile" type="button">Open web profile</button>
             <button data-action="sign-out" type="button">Log out</button>
@@ -1237,7 +1383,10 @@
     const score = currentResumeScore(application);
     const scoreLabel = formatWholeScore(score);
     const company = state.job?.company || "Captured company";
-    const title = state.job?.title || jobTitleFromDocumentTitle(document.title) || "Current job";
+    const title = cleanCapturedJobTitle(state.job?.title || "", state.job?.company || "", state.provider)
+      || jobTitleFromDocumentTitle(document.title)
+      || titleFromJobUrl(location.href, state.provider)
+      || "Current job";
     const logo = companyLogoText(company);
     const scoreUpdatedLabel = application?.score_updated_at
       ? `Score updated ${relativeTime(application.score_updated_at)}`
@@ -1286,6 +1435,7 @@
           <span><strong>${review.needsReview}</strong> Blocked</span>
         </div>
         ${renderProfileRecordSelectors()}
+        <label class="sja-safety-note sja-replace-existing"><input type="checkbox" data-action="replace-existing" ${state.replaceExisting ? "checked" : ""} ${state.busy ? "disabled" : ""}> Replace existing answers with profile values on this fill</label>
         ${state.contextWarning ? `<div class="sja-status sja-warn">${escapeHtml(state.contextWarning)}</div>` : ""}
         ${state.autofillProgress?.active
           ? renderAutofillProgress()
@@ -1351,23 +1501,15 @@
         </details>
       </section>
 
-      <section class="sja-section">
-        <div class="sja-row-between">
-          <h2>Resume source</h2>
-          <span class="${state.resumeInfo?.has_pdf ? "sja-ok" : "sja-warn"}">${escapeHtml(resumeLabel)}</span>
-        </div>
-        <div class="sja-actions">
-          <button data-action="customize-start" type="button" ${state.job && state.resumeInfo?.has_latex_source ? "" : "disabled"}>Open guided tailoring</button>
-          <button data-action="default-resume" type="button" ${state.resumeInfo?.has_pdf || state.approvedArtifact ? "" : "disabled"}>${state.approvedArtifact ? "Upload approved tailored PDF" : "Upload saved PDF"}</button>
-        </div>
-        ${state.approvedArtifact ? `
-          <div class="sja-subpanel">
-            <strong>Approved tailored resume</strong>
-            <span>${escapeHtml(state.approvedArtifact.filename || "Tailored resume PDF")}</span>
-            <span>Ready to upload from this application page.</span>
-          </div>
-        ` : ""}
-        ${renderCustomization()}
+      <section class="sja-section sja-utility-list" aria-label="Profile and resume tools">
+        <button class="sja-utility-row" data-action="open-autofill-information" data-workspace-origin="tailor-profile" type="button">
+          <span><strong>Autofill information</strong><small>Review the facts used on application forms</small></span>
+          <span aria-hidden="true">&#8250;</span>
+        </button>
+        <button class="sja-utility-row" data-action="open-resume-workspace" data-workspace-origin="tailor-resume" type="button">
+          <span><strong>Resume</strong><small>${escapeHtml(state.approvedArtifact?.filename || resumeLabel)}</small></span>
+          <span aria-hidden="true">&#8250;</span>
+        </button>
       </section>
     `;
   }
@@ -1457,7 +1599,15 @@
   function renderReviewChecklist() {
     if (isWorkdayMyExperiencePage()) return renderWorkdayExperienceChecklist();
     const items = state.plan?.review_items || [];
-    if (!items.length) return `<div class="sja-muted">Scanning application fields...</div>`;
+    if (!items.length) {
+      if (!isApplicationLikePage()) {
+        return `<div class="sja-muted">Open the application form to scan fields. This job details page has no application inputs.</div>`;
+      }
+      if (state.busy) {
+        return `<div class="sja-muted">Scanning application fields...</div>`;
+      }
+      return `<div class="sja-muted">Waiting for application fields on this step...</div>`;
+    }
     return `<div class="sja-question-group sja-question-ledger">${items.map(renderReviewQuestion).join("")}</div>`;
   }
 
@@ -1533,6 +1683,32 @@
     const stateInfo = reviewItemState(item);
     const label = reviewItemDisplayLabel(item);
     const detail = reviewItemDetail(item, stateInfo);
+    if (isResumeReviewItem(item)) {
+      return `
+        <button class="sja-question-row sja-question-button ${stateInfo.className}" data-action="open-resume-workspace" data-workspace-origin="ledger-resume" type="button" aria-label="Choose resume for ${escapeAttr(label)}">
+          <span class="sja-question-mark" aria-hidden="true">${escapeHtml(stateInfo.symbol)}</span>
+          <span>
+            <strong>${escapeHtml(label)} <small class="sja-question-requirement">${item.required ? "required" : "optional"}</small></strong>
+            <small>${escapeHtml(detail || "Choose a profile or tailored resume")}</small>
+          </span>
+          <span class="sja-question-chevron" aria-hidden="true">&#8250;</span>
+        </button>
+      `;
+    }
+    const question = (state.scan?.questions || []).find((candidate) => candidate.field_id === item.field_id);
+    if (question?.input_type === "file") {
+      const attached = question.current_value_present;
+      return `
+        <div class="sja-question-row ${stateInfo.className}">
+          <span class="sja-question-mark" aria-hidden="true">${escapeHtml(stateInfo.symbol)}</span>
+          <div>
+            <strong>${escapeHtml(label)} <small class="sja-question-requirement">${item.required ? "required" : "optional"}</small></strong>
+            <span>${attached ? "File selected on this form. Review the employer's upload status." : "Choose a file for this application. A text answer does not attach a document."}</span>
+            ${!attached ? `<button class="sja-inline-action" data-action="attach-document" data-field-id="${escapeAttr(item.field_id)}" type="button">Attach document</button>` : ""}
+          </div>
+        </div>
+      `;
+    }
     const generatable = isGeneratableQuestion(item);
     const statusRecord = state.automaticAnswerStatus[item.field_id];
     const automaticStatus = statusRecord?.label === item.label ? statusRecord.state : "";
@@ -1550,6 +1726,35 @@
         </div>
       </div>
     `;
+  }
+
+  function isResumeReviewItem(item) {
+    const label = weakText(item?.label || "");
+    const question = (state.scan?.questions || []).find((candidate) => candidate.field_id === item?.field_id);
+    return !/cover letter/i.test(label) && (
+      item?.field_id === "workday-resume"
+      || (question?.input_type === "file" && /\b(?:resume|cv)\b/i.test(label))
+      || /^(?:resume|resume\/cv|cv)$/i.test(label.trim())
+    );
+  }
+
+  function attachApplicationDocument(fieldId) {
+    const question = (state.scan?.questions || []).find((candidate) => candidate.field_id === fieldId);
+    const input = findField(fieldId);
+    if (question?.input_type !== "file" || !isTag(input, "input") || input.type !== "file" || input.disabled) {
+      state.error = "This upload field changed or is unavailable. Rescan the application and try again.";
+      render();
+      return;
+    }
+    if (input.files?.length || input.value) {
+      state.message = "A file is already selected. Review or replace it on the employer's form.";
+      render();
+      return;
+    }
+    // Open this employer control directly in the user's click gesture. Its own
+    // accept/multiple rules and upload handlers remain authoritative.
+    input.addEventListener("change", () => { void refreshCurrentPage(); }, { once: true });
+    input.click();
   }
 
   function isGeneratableQuestion(item) {
@@ -1615,9 +1820,11 @@
     if (!result) return "";
     const failures = [
       ...(result.record_failures || []),
-      ...(result.failed_values || []).map((item) => (
-        `${item.field}: ${item.value} · Failed: ${weakText(item.status).replaceAll("_", " ")}`
-      )),
+      ...(result.failed_values || []).map((item) => {
+        const rawValue = weakText(item.value);
+        const clipped = rawValue.length > 80 ? `${rawValue.slice(0, 77)}...` : rawValue;
+        return `${item.field}: ${clipped} · Failed: ${weakText(item.status).replaceAll("_", " ")}`;
+      }),
     ];
     if (!failures.length) return `<div class="sja-status sja-success">The approved fields were filled. Save and Continue was not clicked.</div>`;
     return `
@@ -1895,6 +2102,7 @@
 
   function bindEvents(root) {
     root.querySelector("[data-action='close']")?.addEventListener("pointerup", () => {
+      if (state.workspace === "profile" && !confirmLeaveProfileChanges()) return;
       notifyBackground({ type: "SMARTJOBAPPLY_PANEL_STATE", open: false });
       stopPageMonitoring();
       root.remove();
@@ -1968,6 +2176,104 @@
     root.querySelector("[data-action='open-web-profile']")?.addEventListener("pointerup", () => {
       window.open(`${WEB_APP_BASE}/profile`, "_blank", "noopener,noreferrer");
     });
+    root.querySelectorAll("[data-action='open-autofill-information']").forEach((button) => {
+      button.addEventListener("pointerup", () => openProfileWorkspace("personal", button));
+    });
+    root.querySelectorAll("[data-action='open-resume-workspace']").forEach((button) => {
+      button.addEventListener("pointerup", () => openResumeWorkspace(button));
+    });
+    root.querySelectorAll("[data-action='attach-document']").forEach((button) => {
+      button.addEventListener("click", () => attachApplicationDocument(button.dataset.fieldId));
+    });
+    root.querySelector("[data-action='workspace-back']")?.addEventListener("pointerup", () => closeWorkspace());
+    root.querySelector("[data-action='profile-cancel']")?.addEventListener("pointerup", () => closeWorkspace());
+    root.querySelector("[data-action='profile-save']")?.addEventListener("pointerup", () => {
+      void saveProfileSection();
+    });
+    root.querySelector("[data-profile-workspace], [data-resume-workspace]")?.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeWorkspace();
+    });
+    root.querySelectorAll("[data-profile-section]").forEach((button) => {
+      button.addEventListener("pointerup", () => switchProfileSection(button.dataset.profileSection || "personal"));
+    });
+    root.querySelectorAll("[data-profile-path]").forEach((control) => {
+      const update = () => {
+        const kind = control.dataset.valueKind || "string";
+        let value = control.value;
+        if (kind === "checkbox") value = Boolean(control.checked);
+        if (kind === "tri-state") value = control.value === "" ? null : control.value === "true";
+        if (kind === "nullable-string") value = control.value || null;
+        if (kind === "list") value = control.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+        profileParts.setPath(state.profileDraft, control.dataset.profilePath, value);
+        state.profileDirty = true;
+        state.profileSaveStatus = "";
+        state.profileErrors = [];
+      };
+      control.addEventListener(control.matches("select, input[type='checkbox']") ? "change" : "input", update);
+    });
+    root.querySelectorAll("[data-profile-list-path]").forEach((control) => {
+      control.addEventListener("change", () => {
+        profileParts.toggleListValue(
+          state.profileDraft,
+          control.dataset.profileListPath,
+          control.dataset.profileListValue,
+          control.checked,
+        );
+        state.profileDirty = true;
+        state.profileSaveStatus = "";
+        state.profileErrors = [];
+      });
+    });
+    root.querySelectorAll("[data-profile-compensation-type]").forEach((control) => {
+      control.addEventListener(control.matches("select") ? "change" : "input", () => {
+        profileParts.setCompensationField(
+          state.profileDraft,
+          control.dataset.profileCompensationType,
+          control.dataset.profileCompensationField,
+          control.value,
+        );
+        state.profileDirty = true;
+        state.profileSaveStatus = "";
+        state.profileErrors = [];
+      });
+    });
+    root.querySelector("[data-action='profile-add-record']")?.addEventListener("pointerup", (event) => {
+      profileParts.addRecord(state.profileDraft, event.currentTarget.dataset.recordKind);
+      state.profileDirty = true;
+      render();
+    });
+    root.querySelectorAll("[data-action='profile-remove-record']").forEach((button) => {
+      button.addEventListener("pointerup", () => {
+        const index = Number.parseInt(button.dataset.recordIndex, 10);
+        if (!window.confirm(`Remove ${button.dataset.recordKind === "education" ? "education" : "work experience"} ${index + 1}?`)) return;
+        profileParts.removeRecord(state.profileDraft, button.dataset.recordKind, index);
+        state.profileDirty = true;
+        render();
+      });
+    });
+    root.querySelectorAll("[data-action='profile-move-record']").forEach((button) => {
+      button.addEventListener("pointerup", () => {
+        profileParts.moveRecord(
+          state.profileDraft,
+          button.dataset.recordKind,
+          Number.parseInt(button.dataset.recordIndex, 10),
+          Number.parseInt(button.dataset.direction, 10),
+        );
+        state.profileDirty = true;
+        render();
+      });
+    });
+    root.querySelector("[data-action='use-profile-resume']")?.addEventListener("pointerup", () => {
+      void uploadDefaultResume(false);
+    });
+    root.querySelector("[data-action='use-tailored-resume']")?.addEventListener("pointerup", () => {
+      void uploadDefaultResume(true);
+    });
+    root.querySelector("[data-action='manage-profile-resume']")?.addEventListener("pointerup", () => {
+      window.open(`${WEB_APP_BASE}/profile/resume`, "_blank", "noopener,noreferrer");
+    });
     root.querySelector("[data-action='restart-page']")?.addEventListener("pointerup", () => {
       void restartPageAnalysis();
     });
@@ -1976,7 +2282,9 @@
     root.querySelector("[data-action='continue-next-page']")?.addEventListener("pointerup", () => {
       void withBusy("Continuing to next page", continueToNextPage);
     });
-    root.querySelector("[data-action='default-resume']")?.addEventListener("pointerup", uploadDefaultResume);
+    root.querySelector("[data-action='default-resume']")?.addEventListener("pointerup", () => {
+      void uploadDefaultResume(true);
+    });
     root.querySelector("[data-action='customize-start']")?.addEventListener("pointerup", openWebCustomization);
     root.querySelectorAll("[data-action='open-profile']").forEach((button) => {
       button.addEventListener("pointerup", () => {
@@ -2031,6 +2339,10 @@
         else state.recordSelections[kind] = Number.parseInt(select.value, 10);
         void withBusy("Updating profile record", rescanAndPlan);
       });
+    });
+    root.querySelector("[data-action='replace-existing']")?.addEventListener("change", (event) => {
+      state.replaceExisting = event.target.checked;
+      void withBusy("Reviewing existing answers", rescanAndPlan);
     });
   }
 
@@ -2731,6 +3043,24 @@
         font-size: 9.5px;
         line-height: 1.3 !important;
       }
+      #smartjobapply-panel .sja-replace-existing {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 4px 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+      }
+      #smartjobapply-panel .sja-replace-existing input {
+        flex: 0 0 13px;
+        width: 13px;
+        height: 13px;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        appearance: auto;
+      }
       #smartjobapply-panel .sja-continue-footer {
         position: sticky;
         bottom: 0;
@@ -2818,6 +3148,34 @@
       #smartjobapply-panel .sja-question-row.ready::before { background: #2457a6; }
       #smartjobapply-panel .sja-question-row.failed::before { background: #a33c32; }
       #smartjobapply-panel .sja-question-row.blocked::before { background: #a96519; }
+      #smartjobapply-panel .sja-question-button {
+        width: 100%;
+        grid-template-columns: 18px minmax(0, 1fr) 12px;
+        color: #121814;
+        text-align: left;
+        cursor: pointer;
+      }
+      #smartjobapply-panel .sja-question-button:hover,
+      #smartjobapply-panel .sja-question-button:focus-visible {
+        background: #eef2f0;
+      }
+      #smartjobapply-panel .sja-question-button > span:nth-child(2) {
+        min-width: 0;
+      }
+      #smartjobapply-panel .sja-question-button small:not(.sja-question-requirement) {
+        display: block;
+        margin-top: 1px;
+        color: #667169;
+        font-size: 9.5px;
+        font-weight: 400;
+        overflow-wrap: anywhere;
+      }
+      #smartjobapply-panel .sja-question-button .sja-question-chevron {
+        align-self: center;
+        color: #667169;
+        font-size: 15px;
+        text-align: right;
+      }
       #smartjobapply-panel .sja-question-row > div {
         min-width: 0;
         padding-top: 1px;
@@ -3022,6 +3380,396 @@
         background: #e9eeeb;
         color: #38443e;
         font-size: 10px;
+      }
+      #smartjobapply-panel .sja-status > span {
+        display: block;
+      }
+      #smartjobapply-panel .sja-utility-list {
+        display: grid;
+        gap: 0;
+        padding-top: 0;
+      }
+      #smartjobapply-panel .sja-utility-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 18px;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-height: 48px;
+        padding: 7px 4px;
+        border: 0;
+        border-bottom: 1px solid #d9e0dc;
+        border-radius: 0;
+        background: transparent;
+        color: #121814;
+        text-align: left;
+      }
+      #smartjobapply-panel .sja-utility-row:hover,
+      #smartjobapply-panel .sja-utility-row:focus-visible {
+        background: #eef2f0;
+      }
+      #smartjobapply-panel .sja-utility-row > span:first-child {
+        display: grid;
+        gap: 1px;
+        min-width: 0;
+      }
+      #smartjobapply-panel .sja-utility-row strong {
+        color: #121814;
+        font-size: 11.5px;
+        font-weight: 700;
+      }
+      #smartjobapply-panel .sja-utility-row small {
+        color: #667169;
+        font-size: 9.5px;
+        font-weight: 400;
+        overflow-wrap: anywhere;
+      }
+      #smartjobapply-panel .sja-utility-row > span:last-child {
+        color: #667169;
+        font-size: 16px;
+        text-align: right;
+      }
+      #smartjobapply-panel .sja-workspace {
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr) auto;
+        width: 100%;
+        height: calc(100vh - 24px);
+        min-height: 0;
+        overflow: hidden;
+        background: #f6f8f7;
+      }
+      #smartjobapply-panel .sja-workspace-head {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr) 32px;
+        align-items: center;
+        gap: 8px;
+        min-height: 44px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #d9e0dc;
+      }
+      #smartjobapply-panel .sja-workspace-head > div {
+        display: grid;
+        min-width: 0;
+      }
+      #smartjobapply-panel .sja-workspace-head span {
+        color: #667169;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 8.5px;
+      }
+      #smartjobapply-panel .sja-workspace-head strong {
+        color: #121814;
+        font-size: 13px;
+        font-weight: 750;
+      }
+      #smartjobapply-panel .sja-profile-tabs {
+        display: flex;
+        gap: 2px;
+        padding: 6px 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-bottom: 1px solid #d9e0dc;
+        scrollbar-width: thin;
+      }
+      #smartjobapply-panel .sja-profile-tabs button {
+        flex: 0 0 auto;
+        min-height: 32px;
+        padding: 0 8px;
+        border: 0;
+        border-radius: 3px;
+        background: transparent;
+        color: #667169;
+        font-size: 9.5px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+      #smartjobapply-panel .sja-profile-tabs button.active {
+        background: #e3eae6;
+        color: #121814;
+      }
+      #smartjobapply-panel .sja-workspace-scroll {
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 8px 2px 12px;
+        scrollbar-width: thin;
+      }
+      #smartjobapply-panel .sja-workspace-title {
+        display: grid;
+        gap: 1px;
+        margin-bottom: 8px;
+      }
+      #smartjobapply-panel .sja-workspace-title strong {
+        font-size: 12px;
+        font-weight: 750;
+      }
+      #smartjobapply-panel .sja-workspace-title span {
+        color: #667169;
+        font-size: 9.5px;
+      }
+      #smartjobapply-panel .sja-workspace-footer {
+        display: grid;
+        grid-template-columns: 1fr 1.4fr;
+        gap: 6px;
+        padding-top: 8px;
+        border-top: 1px solid #d9e0dc;
+        background: #f6f8f7;
+      }
+      #smartjobapply-panel .sja-workspace-footer button {
+        min-height: 36px;
+      }
+      #smartjobapply-panel .sja-profile-form,
+      #smartjobapply-panel .sja-record-list {
+        display: grid;
+        gap: 8px;
+      }
+      #smartjobapply-panel .sja-workspace label,
+      #smartjobapply-panel .sja-workspace fieldset {
+        margin: 0;
+        padding: 0;
+        border-radius: 0;
+        background: transparent;
+      }
+      #smartjobapply-panel .sja-workspace label {
+        border: 0;
+      }
+      #smartjobapply-panel .sja-profile-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+      #smartjobapply-panel .sja-profile-grid-three {
+        grid-template-columns: minmax(0, 1.3fr) minmax(58px, .8fr) minmax(70px, 1fr);
+      }
+      #smartjobapply-panel .sja-profile-field {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+        color: #121814;
+      }
+      #smartjobapply-panel .sja-profile-field > span,
+      #smartjobapply-panel .sja-compensation-row legend,
+      #smartjobapply-panel .sja-company-relationship legend,
+      #smartjobapply-panel .sja-profile-check-list legend {
+        color: #667169;
+        font-size: 9px;
+        font-weight: 650;
+      }
+      #smartjobapply-panel .sja-profile-field input,
+      #smartjobapply-panel .sja-profile-field select,
+      #smartjobapply-panel .sja-profile-field textarea {
+        width: 100%;
+        min-width: 0;
+        min-height: 32px;
+        margin: 0;
+        padding: 6px 7px;
+        border: 1px solid #cdd6d1;
+        border-radius: 3px;
+        outline: 0;
+        background: #ffffff;
+        color: #121814;
+        font: inherit;
+        font-size: 10.5px;
+      }
+      #smartjobapply-panel .sja-profile-field textarea {
+        min-height: 72px;
+        resize: vertical;
+      }
+      #smartjobapply-panel .sja-profile-field textarea.compact {
+        min-height: 54px;
+      }
+      #smartjobapply-panel .sja-profile-field input:focus,
+      #smartjobapply-panel .sja-profile-field select:focus,
+      #smartjobapply-panel .sja-profile-field textarea:focus {
+        border-color: #147a52;
+        box-shadow: 0 0 0 1px #147a52;
+      }
+      #smartjobapply-panel .sja-profile-check {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        align-items: center;
+        gap: 7px;
+        min-height: 32px;
+        padding: 3px 0;
+        color: #121814;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      #smartjobapply-panel .sja-profile-check input,
+      #smartjobapply-panel .sja-profile-check-list input {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        accent-color: #147a52;
+      }
+      #smartjobapply-panel .sja-profile-guidance {
+        margin: 0;
+        padding: 6px 0;
+        border-bottom: 1px solid #d9e0dc;
+        color: #667169;
+        font-size: 9.5px;
+      }
+      #smartjobapply-panel .sja-profile-rule {
+        margin-top: 4px;
+        padding-top: 7px;
+        border-top: 1px solid #d9e0dc;
+      }
+      #smartjobapply-panel .sja-profile-rule span {
+        color: #667169;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 8.5px;
+        font-weight: 700;
+      }
+      #smartjobapply-panel .sja-profile-record {
+        display: grid;
+        gap: 7px;
+        margin: 0;
+        padding: 9px 0 11px;
+        border: 0;
+        border-top: 1px solid #d9e0dc;
+      }
+      #smartjobapply-panel .sja-profile-record:first-child {
+        border-top: 0;
+        padding-top: 0;
+      }
+      #smartjobapply-panel .sja-record-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      #smartjobapply-panel .sja-record-head > strong {
+        font-size: 11px;
+        font-weight: 750;
+      }
+      #smartjobapply-panel .sja-record-head > div {
+        display: flex;
+        gap: 2px;
+      }
+      #smartjobapply-panel .sja-record-icon {
+        width: 32px;
+        min-width: 32px;
+        min-height: 32px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #667169;
+        font-size: 13px;
+      }
+      #smartjobapply-panel .sja-record-remove {
+        color: #a33c32;
+      }
+      #smartjobapply-panel .sja-add-record {
+        width: 100%;
+        margin-top: 8px;
+      }
+      #smartjobapply-panel .sja-profile-check-list,
+      #smartjobapply-panel .sja-compensation-row,
+      #smartjobapply-panel .sja-company-relationship {
+        min-width: 0;
+        margin: 0;
+        padding: 7px 0;
+        border: 0;
+        border-bottom: 1px solid #e5eae7;
+      }
+      #smartjobapply-panel .sja-profile-check-list > div {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px 8px;
+        margin-top: 5px;
+      }
+      #smartjobapply-panel .sja-profile-check-list label {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr);
+        align-items: center;
+        gap: 5px;
+        min-height: 28px;
+        color: #121814;
+        font-size: 9.5px;
+      }
+      #smartjobapply-panel .sja-company-relationship {
+        display: grid;
+        gap: 3px;
+      }
+      #smartjobapply-panel .sja-resume-summary,
+      #smartjobapply-panel .sja-approved-resume {
+        display: grid;
+        gap: 3px;
+        padding: 8px 0 10px;
+        border-bottom: 1px solid #d9e0dc;
+      }
+      #smartjobapply-panel .sja-resume-summary span,
+      #smartjobapply-panel .sja-approved-resume span {
+        color: #667169;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 8.5px;
+      }
+      #smartjobapply-panel .sja-resume-summary strong,
+      #smartjobapply-panel .sja-approved-resume strong {
+        font-size: 11.5px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+      #smartjobapply-panel .sja-resume-summary small {
+        color: #667169;
+        font-size: 9.5px;
+      }
+      #smartjobapply-panel .sja-choice-list {
+        display: grid;
+        gap: 0;
+        margin: 8px 0;
+        border-top: 1px solid #d9e0dc;
+      }
+      #smartjobapply-panel .sja-choice-row {
+        display: grid;
+        grid-template-columns: 26px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-height: 58px;
+        padding: 7px 2px;
+        border: 0;
+        border-bottom: 1px solid #d9e0dc;
+        border-radius: 0;
+        background: transparent;
+        color: #121814;
+        text-align: left;
+      }
+      #smartjobapply-panel .sja-choice-row:not(:disabled):hover,
+      #smartjobapply-panel .sja-choice-row:not(:disabled):focus-visible {
+        background: #eef2f0;
+      }
+      #smartjobapply-panel .sja-choice-row > span:last-child {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      #smartjobapply-panel .sja-choice-row strong {
+        font-size: 11.5px;
+      }
+      #smartjobapply-panel .sja-choice-row small {
+        color: #667169;
+        font-size: 9.5px;
+        font-weight: 400;
+        overflow-wrap: anywhere;
+      }
+      #smartjobapply-panel .sja-choice-mark {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        color: #147a52;
+        font-size: 14px;
+      }
+      #smartjobapply-panel .sja-approved-resume button,
+      #smartjobapply-panel .sja-manage-resume {
+        margin-top: 5px;
+      }
+      @media (max-width: 340px) {
+        #smartjobapply-panel .sja-profile-grid,
+        #smartjobapply-panel .sja-profile-grid-three,
+        #smartjobapply-panel .sja-profile-check-list > div {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
       #smartjobapply-panel .sja-success { background: #edf5ef; color: #177a55; }
       #smartjobapply-panel .sja-error { background: #fff1f1; color: #9f2f2f; }
@@ -3284,10 +4032,20 @@
   function isApplicationLikePage() {
     if (isAuthenticationPage()) return true;
     const path = location.pathname.toLowerCase().replace(/[^a-z_]+/g, " ");
-    if (/\b(apply|application|job_app|candidate_home)\b/.test(path)) return true;
+    if (/\b(apply|application|job_app|candidate_home|oneclick)\b/.test(path)) return true;
+    // Workday may retain the job URL when the flow advances, and its question
+    // dropdowns are buttons rather than native inputs. Use the active step plus
+    // visible question controls instead of requiring a resume input or JD copy.
+    if (state.provider === "workday" && isWorkdayApplicationQuestionsPage()) {
+      const controls = queryAllFromPage("[role='group'] button[aria-haspopup='listbox'], [role='group'] button[role='combobox'], [role='group'] textarea, [role='group'] select, [role='group'] input");
+      if (controls.some(isPageElementVisible)) return true;
+    }
     if (queryAllFromPage("input[type='file']").some(isPageElementVisible)) return true;
+    // Do not treat JD body copy ("resume", "cover letter") as an application form.
     const bodyText = weakText(document.body?.innerText || "").toLowerCase();
-    const applicationCopy = /\b(submit your application|application form|attach resume|resume\/cv|cover letter)\b/.test(bodyText);
+    const applicationCopy = /\b(submit your application|application form|complete your application|review your application)\b/.test(bodyText)
+      || Boolean(state.applicationId && queryAllFromPage("form button, form input[type='submit']")
+        .some((button) => isPageElementVisible(button) && /\bsubmit application\b/i.test(weakText(button.textContent || button.value))));
     if (!applicationCopy) return false;
     const visibleControls = queryAllFromPage("input, select, textarea")
       .filter((element) => !element.closest("#smartjobapply-panel"))
@@ -3395,7 +4153,7 @@
       return "";
     };
     const title = firstValue(config.selectors?.title || ["h1"]);
-    const company = firstValue(config.selectors?.company || []);
+    const company = cleanCapturedCompany(firstValue(config.selectors?.company || []), state.provider);
     const description = (config.selectors?.description || [])
       .map((selector) => queryFirstFromPage(selector))
       .filter(Boolean)
@@ -3416,10 +4174,12 @@
 
   function shouldScanApplicationForm(scan) {
     if (isAuthenticationPage() || !scan.questions.length) return false;
+    // Job details / JD pages must not trigger form planning.
+    if (!isApplicationLikePage()) return false;
     const path = location.pathname.toLowerCase();
     const params = new URLSearchParams(location.search);
     if (state.provider === "icims" && (params.get("mode") === "apply" || params.get("apply") === "yes")) return true;
-    if (/\b(apply|application|job_app)\b/.test(path.replace(/[^a-z_]+/g, " "))) return true;
+    if (/\b(apply|application|job_app|oneclick)\b/.test(path.replace(/[^a-z_]+/g, " "))) return true;
     if (queryAllFromPage("input[type='file']").some(isPageElementVisible)) return true;
     return scan.questions.length >= 3;
   }
@@ -3451,13 +4211,35 @@
     }
     const selectors = providerConfig.selectors || {};
     const titleCompany = companyFromDocumentTitle(document.title);
-    let company = detectedProvider === "ashby" && titleCompany
-      ? titleCompany
-      : firstText(selectors.company || []);
-    if (!company) {
-      company = companyFromPage(detectedProvider);
+    let company = "";
+    if (detectedProvider === "ashby" && titleCompany) {
+      company = cleanCapturedCompany(titleCompany, detectedProvider);
+    } else {
+      for (const selector of selectors.company || []) {
+        const element = queryFirstFromPage(selector);
+        const value =
+          element?.getAttribute?.("content") ||
+          element?.getAttribute?.("alt") ||
+          element?.getAttribute?.("aria-label") ||
+          text(element);
+        company = cleanCapturedCompany(value, detectedProvider);
+        if (company) break;
+      }
     }
-    const title = cleanCapturedJobTitle(firstText(selectors.title || ["h1"]), company);
+    if (!company) {
+      company = cleanCapturedCompany(companyFromPage(detectedProvider), detectedProvider);
+    }
+    let title = "";
+    for (const selector of selectors.title || ["h1"]) {
+      title = cleanCapturedJobTitle(firstText([selector]), company, detectedProvider);
+      if (title) break;
+    }
+    if (!title) {
+      title = cleanCapturedJobTitle(document.title || "", company, detectedProvider);
+    }
+    if (!title) {
+      title = titleFromJobUrl(location.href, detectedProvider);
+    }
     const tabPanelDescription = detectedProvider === "ashby" ? activeTabPanelText() : "";
     const descriptionSource = tabPanelDescription
       ? "active tab panel"
@@ -3512,11 +4294,13 @@
 
   function companyFromPage(detectedProvider) {
     const title = document.title || "";
-    const fromApplicationTitle = companyFromDocumentTitle(title);
+    const fromApplicationTitle = cleanCapturedCompany(companyFromDocumentTitle(title), detectedProvider);
     if (fromApplicationTitle) return fromApplicationTitle;
-    const fromMeta =
+    const fromMeta = cleanCapturedCompany(
       queryFirstFromPage("meta[property='og:site_name']")?.content?.trim() ||
-      queryFirstFromPage("meta[name='application-name']")?.content?.trim();
+      queryFirstFromPage("meta[name='application-name']")?.content?.trim(),
+      detectedProvider,
+    );
     const providerLabel = globalThis.ApplyTexProviders?.configFor?.(detectedProvider)?.label || detectedProvider;
     if (fromMeta && !fromMeta.toLowerCase().includes(String(providerLabel || "").toLowerCase())) return fromMeta;
     if (detectedProvider === "workday") {
@@ -3524,12 +4308,53 @@
       if (brandedCompany) return brandedCompany;
     }
     const parsed = new URL(location.href);
-    const boardToken = parsed.searchParams.get("for") || parsed.pathname.split("/").filter(Boolean)[0] || "";
-    return humanizeBoardToken(boardToken || parsed.hostname.split(".")[0]);
+    // SmartRecruiters boards are usually /CompanyToken/job-slug
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    const boardToken = parsed.searchParams.get("for")
+      || (detectedProvider === "smartrecruiters" ? pathParts[0] : "")
+      || pathParts[0]
+      || "";
+    return cleanCapturedCompany(
+      humanizeBoardToken(boardToken || parsed.hostname.split(".")[0]),
+      detectedProvider,
+    ) || humanizeBoardToken(boardToken || parsed.hostname.split(".")[0]);
   }
 
-  function cleanCapturedJobTitle(value, company = "") {
+  function isCaptureNoiseText(value, detectedProvider = "") {
+    const text = weakText(value).replace(/\s+/g, " ").trim();
+    if (!text) return true;
+    const lowered = text.toLowerCase();
+    const providerLabel = String(
+      globalThis.ApplyTexProviders?.configFor?.(detectedProvider)?.label || detectedProvider || "",
+    ).toLowerCase();
+    if (providerLabel && (lowered === providerLabel || lowered.includes(providerLabel))) return true;
+    if (/\binternet explorer\b|\bie\s*11\b|\bno longer supported\b|\bunsupported browser\b/.test(lowered)) {
+      return true;
+    }
+    if (/\bcookie\b|\bprivacy policy\b|\baccept all\b|\bsorry,?\b/.test(lowered)) return true;
+    if (/^https?:\/\//i.test(text)) return true;
+    return false;
+  }
+
+  function cleanCapturedCompany(value, detectedProvider = "") {
+    let company = weakText(value)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!company) return "";
+    // Prefer a short logo alt / first line when scrapers grab a whole header block.
+    const firstLine = company.split(/\n|\r/)[0].trim();
+    if (firstLine && firstLine.length < company.length) company = firstLine;
+    if (company.length > 80) company = company.slice(0, 80).trim();
+    if (isCaptureNoiseText(company, detectedProvider)) return "";
+    return company;
+  }
+
+  function cleanCapturedJobTitle(value, company = "", detectedProvider = "") {
     let title = weakText(value).replace(/^job application for\s+/i, "");
+    const firstLine = title.split(/\n|\r/)[0].trim();
+    if (firstLine && firstLine.length < title.length) title = firstLine;
+    title = title.replace(/\s+/g, " ").trim();
+    if (isCaptureNoiseText(title, detectedProvider)) return "";
     const companyText = weakText(company);
     if (companyText) {
       const escapedCompany = companyText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -3538,9 +4363,27 @@
     return title.trim();
   }
 
+  function titleFromJobUrl(url, detectedProvider = "") {
+    try {
+      const parsed = new URL(url || location.href);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      if (!parts.length) return "";
+      let slug = decodeURIComponent(parts[parts.length - 1] || "");
+      // SmartRecruiters often uses "<id>-Job-Title-Slug"
+      slug = slug.replace(/^[0-9a-f-]{8,}-/i, "").replace(/^\d+-/, "");
+      if (detectedProvider === "smartrecruiters" && parts.length >= 2 && /^(jobs?|postings?)$/i.test(parts[0])) {
+        slug = decodeURIComponent(parts[parts.length - 1] || slug);
+      }
+      const title = humanizeBoardToken(slug.replace(/\+/g, " "));
+      return cleanCapturedJobTitle(title, "", detectedProvider);
+    } catch {
+      return "";
+    }
+  }
+
   function jobTitleFromDocumentTitle(value) {
     const company = companyFromDocumentTitle(value);
-    return cleanCapturedJobTitle(value, company);
+    return cleanCapturedJobTitle(value, company, state.provider);
   }
 
   function companyFromDocumentTitle(value) {
@@ -4007,6 +4850,11 @@
   function controlHasCurrentValue(element, { checkbox = false, fileInput = false } = {}) {
     if (checkbox) return element.checked;
     if (fileInput) return Boolean(element.files?.length || element.value);
+    if (isTag(element, "select")) {
+      return Array.from(element.selectedOptions || []).some((option) =>
+        Boolean(option.value) && !/^(?:select(?: one| an? option)?|please select|choose(?: one| an? option)?)[.\s…*-]*$/i.test(weakText(option.textContent)),
+      );
+    }
     if (isCustomSelectInput(element)) {
       const label = weakText(labelFor(element)).toLowerCase();
       let container = element.parentElement;
@@ -4019,12 +4867,13 @@
       }
       return Boolean(selectedSingleValue(element)) || selectedMultiValues(element).length > 0 || Boolean(weakText(element.value));
     }
-    return Boolean(element.value || element.textContent?.trim());
+    return "value" in element ? Boolean(weakText(element.value)) : Boolean(weakText(element.textContent));
   }
 
   function controlCurrentValue(element, { checkbox = false, fileInput = false } = {}) {
     if (checkbox) return Boolean(element.checked);
     if (fileInput) return element.files?.[0]?.name || null;
+    if (isTag(element, "select") && !controlHasCurrentValue(element)) return null;
     if (isCustomSelectInput(element)) {
       const selected = selectedMultiValues(element);
       if (selected.length) return selected;
@@ -4209,7 +5058,13 @@
       if (fileLabel) return fileLabel;
     }
     if (element.labels?.length) {
-      const labelText = Array.from(element.labels).map((label) => label.textContent.trim()).join(" ");
+      const labelText = Array.from(element.labels).map((label) => {
+        // A wrapping label can contain every dropdown option or textarea value.
+        // Only its prompt belongs in the question sent to the resolver.
+        const copy = label.cloneNode(true);
+        copy.querySelectorAll("input, select, textarea, button, [role='listbox'], [contenteditable='true']").forEach((control) => control.remove());
+        return copy.textContent.trim();
+      }).join(" ");
       return sanitizeFieldLabel(
         cleanControlText(labelText, isCustomSelectInput(element) ? selectedMultiValues(element) : []),
         element,
@@ -4364,6 +5219,13 @@
 
   function fileUploadLabelFor(element) {
     const fieldId = weakText(element.id || element.name).toLowerCase();
+    // Greenhouse and similar ATSes nest a hidden input inside an Attach button;
+    // the actual document name and required marker live on the enclosing group.
+    const group = element.closest("[role='group'], fieldset");
+    const groupLabel = weakText(group?.getAttribute("aria-label") || group?.querySelector("legend")?.textContent);
+    const explicitLabel = weakText(element.getAttribute("aria-label") || Array.from(element.labels || []).map((label) => label.textContent).join(" "));
+    if (groupLabel && /cover letter|resume|\bcv\b|portfolio|transcript|document|attachment/i.test(groupLabel)) return groupLabel;
+    if (explicitLabel && !/^(attach|upload|choose file|select file)$/i.test(explicitLabel)) return explicitLabel;
     const containerText = weakText(element.closest("label, [data-field], .field, .field-wrapper, div, section, li")?.textContent || "");
     if (fieldId.includes("resume") || fieldId.includes("cv")) return /\*/.test(containerText) ? "Resume/CV*" : "Resume/CV";
     if (fieldId.includes("cover")) return /\*/.test(containerText) ? "Cover Letter*" : "Cover Letter";
@@ -4535,16 +5397,34 @@
 
   async function fillReviewedFields(actions, run = null) {
     const setNativeValue = (element, value) => {
-      const elementWindow = element.ownerDocument.defaultView || window;
-      const prototype =
-        isTag(element, "textarea")
-          ? elementWindow.HTMLTextAreaElement.prototype
-          : isTag(element, "select")
-            ? elementWindow.HTMLSelectElement.prototype
-            : elementWindow.HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-      if (descriptor?.set) descriptor.set.call(element, value);
-      else element.value = value;
+      const text = value == null ? "" : String(value);
+      const previous = element && "value" in element ? element.value : "";
+      // Walk this element's own prototype chain so we never call
+      // HTMLInputElement's setter on a textarea/select/button (Illegal invocation).
+      let setter = null;
+      let proto = element ? Object.getPrototypeOf(element) : null;
+      while (proto && !setter) {
+        const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+        if (descriptor?.set) setter = descriptor.set;
+        proto = Object.getPrototypeOf(proto);
+      }
+      try {
+        if (setter) setter.call(element, text);
+        else if ("value" in element) element.value = text;
+      } catch {
+        try {
+          element.value = text;
+        } catch {
+          /* leave value unchanged; caller will treat as not committed */
+        }
+      }
+      // React controlled inputs ignore events unless the tracker still has the old value.
+      try {
+        const tracker = element && element._valueTracker;
+        if (tracker && typeof tracker.setValue === "function") tracker.setValue(previous);
+      } catch {
+        /* ignore */
+      }
     };
     const dispatch = (element) => {
       const EventConstructor = element.ownerDocument.defaultView?.Event || Event;
@@ -4571,7 +5451,7 @@
       }
       element.dispatchEvent(new elementWindow.Event("change", { bubbles: true }));
       element.dispatchEvent(new elementWindow.Event("blur", { bubbles: true }));
-      return true;
+      return element.value.replace(/\D/g, "") === digits;
     };
     const visible = (element) => {
       const style = element.ownerDocument.defaultView?.getComputedStyle(element);
@@ -4646,11 +5526,18 @@
       return option === wanted ||
         (optionBinary !== null && wantedBinary !== null && optionBinary === wantedBinary) ||
         Boolean(optionState && wantedState && optionState === wantedState) ||
-        countriesEquivalent(optionText, wantedText) ||
-        option.includes(wanted);
+        countriesEquivalent(optionText, wantedText);
     };
     const exactOptionMatch = (optionText, wantedText) => {
-      return normalizeOptionText(optionText) === normalizeOptionText(wantedText);
+      const normalize = (text) => weakText(text).normalize("NFKC").toLowerCase().replace(/’/g, "'");
+      return normalize(optionText) === normalize(wantedText);
+    };
+    const uniqueOption = (options, value, labelForOption = (option) => option.textContent, matches = optionMatches) => {
+      const available = options.filter((option) => !option.disabled && option.getAttribute("aria-disabled") !== "true");
+      const exact = available.filter((option) => exactOptionMatch(labelForOption(option), value));
+      if (exact.length) return exact.length === 1 ? exact[0] : null;
+      const equivalents = available.filter((option) => matches(labelForOption(option), value));
+      return equivalents.length === 1 ? equivalents[0] : null;
     };
     const strictWorkdayCatalogQuestion = (element) => {
       if (state.provider !== "workday" || !element) return false;
@@ -4681,11 +5568,11 @@
       return values.some((value) => workdayCatalogOptionMatches(current, value, element) || countriesEquivalent(current, value));
     };
     const selectNativeOption = (element, value) => {
-      const option = Array.from(element.options).find((candidate) => optionMatches(candidate.textContent, value));
+      const option = uniqueOption(Array.from(element.options), value);
       if (!option) return false;
       setNativeValue(element, option.value);
       dispatch(element);
-      return true;
+      return element.value === option.value;
     };
     const selectRadioOption = async (fieldId, value) => {
       const radios = queryAllFromPage(`input[type='radio'][name='${cssEscape(fieldId)}']`)
@@ -4709,8 +5596,7 @@
     };
     const selectCustomYesNoOption = async (element, value) => {
       const wanted = weakText(value);
-      const button = customYesNoButtons(element)
-        .find((candidate) => optionMatches(candidate.textContent, wanted));
+      const button = uniqueOption(customYesNoButtons(element), wanted);
       if (!button) return false;
       button.click();
       await new Promise((resolve) => setTimeout(resolve, 120));
@@ -5120,9 +6006,7 @@
           ? roleOptions
           : queryAllFromPage("[id*='option'], [class*='option']")
             .filter((candidate) => visible(candidate) && candidate.getAttribute("role") !== "listbox");
-        const matched = options.find((candidate) => (
-          exactOnly ? exactOptionMatch(candidate.textContent, value) : optionMatches(candidate.textContent, value)
-        ));
+        const matched = uniqueOption(options, value, (option) => option.textContent, exactOnly ? exactOptionMatch : optionMatches);
         if (matched) return matched;
         await new Promise((resolve) => setTimeout(resolve, 60));
       }
@@ -5181,7 +6065,7 @@
         const selected = values
           .map((value) => ({
             value,
-            option: options.find((candidate) => workdayStandardOptionMatches(workdayStandardOptionLabel(candidate), value)),
+            option: uniqueOption(options, value, workdayStandardOptionLabel, workdayStandardOptionMatches),
           }))
           .find((candidate) => candidate.option);
         if (!selected) {
@@ -5340,25 +6224,54 @@
       await new Promise((resolve) => setTimeout(resolve, 180));
     };
     const fillScalarValue = async (element, value, action) => {
-      const expected = valueForField(element, value);
-      const question = workdayQuestionForField(action.field_id);
-      if (state.provider === "workday" && question?.date_component && element.getAttribute("role") === "spinbutton") {
-        await setWorkdaySpinbuttonValue(element, expected);
-      } else {
-        element.focus();
-        setNativeValue(element, expected);
+      let target = element;
+      if (
+        target
+        && !isTag(target, "input")
+        && !isTag(target, "textarea")
+        && !isTag(target, "select")
+        && target.getAttribute("contenteditable") !== "true"
+      ) {
+        target = target.querySelector?.("input, textarea, select, [contenteditable='true']")
+          || findField(action.field_id)
+          || target;
       }
-      dispatch(element);
-      await new Promise((resolve) => setTimeout(resolve, state.provider === "workday" ? 140 : 20));
-      if (state.provider !== "workday" || !isTag(element, "input")) return true;
-      if (question?.date_component) {
-        const observed = element.value || element.getAttribute("aria-valuetext") || "";
+      const expected = valueForField(target, value);
+      const question = workdayQuestionForField(action.field_id);
+      if (state.provider === "workday" && question?.date_component && target.getAttribute("role") === "spinbutton") {
+        await setWorkdaySpinbuttonValue(target, expected);
+      } else if (isTag(target, "select")) {
+        if (!selectNativeOption(target, expected)) return false;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return true;
+      } else if (target.getAttribute("contenteditable") === "true") {
+        target.focus();
+        target.textContent = expected;
+      } else if (!isTag(target, "input") && !isTag(target, "textarea")) {
+        return false;
+      } else {
+        target.focus();
+        setNativeValue(target, expected);
+      }
+      dispatch(target);
+      await new Promise((resolve) => setTimeout(resolve, state.provider === "workday" ? 140 : 40));
+      if (question?.date_component && isTag(target, "input")) {
+        const observed = target.value || target.getAttribute("aria-valuetext") || "";
         const observedNumber = Number.parseInt(observed, 10);
         const expectedNumber = Number.parseInt(expected, 10);
         return Number.isInteger(observedNumber) && Number.isInteger(expectedNumber) && observedNumber === expectedNumber;
       }
-      return comparableValue(element.value) === comparableValue(expected) ||
-        comparableValue(element.getAttribute("aria-valuetext")) === comparableValue(expected);
+      if (!isTag(target, "input") && !isTag(target, "textarea")) return true;
+      let committed = comparableValue(target.value) === comparableValue(expected) ||
+        comparableValue(target.getAttribute("aria-valuetext")) === comparableValue(expected);
+      if (!committed) {
+        // Second pass for React-controlled SmartRecruiters / similar forms.
+        setNativeValue(target, expected);
+        dispatch(target);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        committed = comparableValue(target.value) === comparableValue(expected);
+      }
+      return committed;
     };
     for (const action of actions) {
       if (action.action === "skip" || action.action === "upload" || action.value === null) {
@@ -5511,6 +6424,14 @@
         continue;
       }
         filled += 1;
+      } catch (error) {
+        skipped += 1;
+        failAction(
+          action,
+          "fill_threw",
+          findField(action.field_id),
+          weakText(error?.message || error) || "fill failed",
+        );
       } finally {
         updateAutofillRun(run, action, true);
       }
@@ -5604,12 +6525,28 @@
   }
 
   function findField(fieldId) {
-    const byId = pageRoots()
-      .map((root) => root.getElementById?.(fieldId))
-      .find(Boolean);
-    if (byId) return byId;
-    return queryAllFromPage("input, select, textarea, button, [contenteditable='true']")
-      .find((element) => element.name === fieldId || element.dataset.smartjobapplyFieldId === fieldId) || null;
+    const wanted = String(fieldId || "");
+    if (!wanted) return null;
+    const candidates = queryAllFromPage("input, select, textarea, button, [contenteditable='true']")
+      .filter((element) => (
+        element.dataset.smartjobapplyFieldId === wanted
+        || element.name === wanted
+        || element.id === wanted
+      ));
+    // Prefer the control tagged during scan — getElementById(name) can hit the wrong node.
+    const tagged = candidates.find((element) => element.dataset.smartjobapplyFieldId === wanted);
+    if (tagged) return tagged;
+    const fillable = candidates.find((element) => (
+      isTag(element, "input")
+      || isTag(element, "textarea")
+      || isTag(element, "select")
+      || element.getAttribute("contenteditable") === "true"
+    ));
+    if (fillable) return fillable;
+    if (candidates[0]) return candidates[0];
+    return pageRoots()
+      .map((root) => root.getElementById?.(wanted))
+      .find(Boolean) || null;
   }
 
   function fieldsForId(fieldId) {
@@ -5660,7 +6597,21 @@
     const file = new inputWindow.File([bytes], preparedResume.filename, { type: preparedResume.mime_type });
     const transfer = new inputWindow.DataTransfer();
     transfer.items.add(file);
-    input.files = transfer.files;
+    try {
+      let filesSetter = null;
+      let proto = Object.getPrototypeOf(input);
+      while (proto && !filesSetter) {
+        const descriptor = Object.getOwnPropertyDescriptor(proto, "files");
+        if (descriptor?.set) filesSetter = descriptor.set;
+        proto = Object.getPrototypeOf(proto);
+      }
+      if (filesSetter) filesSetter.call(input, transfer.files);
+      else input.files = transfer.files;
+    } catch (error) {
+      return {
+        error: weakText(error?.message || error) || "Could not attach the resume file to this upload field.",
+      };
+    }
     input.dispatchEvent(new inputWindow.Event("input", { bubbles: true }));
     input.dispatchEvent(new inputWindow.Event("change", { bubbles: true }));
     return { uploaded: true, filename: preparedResume.filename };

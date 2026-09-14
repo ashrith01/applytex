@@ -65,3 +65,50 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+  browser-qa:
+    # Synthetic application lab: real API + real extension panel scripts driven
+    # by Playwright against fixture forms. Fictional profile, no LLM, no network.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.8.17"
+          enable-cache: true
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          uv sync --locked
+          cd frontend && npm ci && npx playwright install --with-deps chromium
+
+      - name: Start autofill lab
+        run: |
+          uv run python scripts/autofill_lab.py --port 8765 --db /tmp/autofill-lab.db > /tmp/autofill-lab.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8765/lab > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8765/lab > /dev/null || { cat /tmp/autofill-lab.log; exit 1; }
+
+      - name: Run synthetic application QA
+        run: node scripts/autofill_lab_qa.mjs
+
+      - name: Upload QA report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: autofill-lab-report
+          path: |
+            .applytex/qa/autofill-lab.json
+            /tmp/autofill-lab.log
+          if-no-files-found: ignore

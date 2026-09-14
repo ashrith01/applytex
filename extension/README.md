@@ -29,6 +29,36 @@ without trying to recapture the job description from the login page.
 It cannot submit applications. The user reviews the completed page and clicks
 the employer's Submit button manually.
 
+The **Autofill information** workspace edits the active local profile without
+leaving the application page. Each category is saved explicitly through a
+partial profile patch; unsaved edits never change reusable answers. Voluntary
+EEO answers retain their separate autofill opt-in. Resume fields open a chooser
+that can upload the saved profile PDF or launch the full Tailor Studio for an
+approved job-specific PDF. Replacing the profile resume remains in the web UI.
+
+Required cover letters and supporting file fields have an **Attach document**
+action in the review checklist. It opens that employer field's file chooser;
+the employer handles file types and upload validation. Selecting a file triggers
+a rescan. Text answers cannot satisfy attachment fields or replace file uploads.
+Full cover-letter generation, export, and durable attachment snapshots remain
+planned in [`docs/JOBRIGHT_PARITY_PLAN.md`](../docs/JOBRIGHT_PARITY_PLAN.md).
+
+Existing page answers are preserved by default. Select **Replace existing answers
+with profile values on this fill** to review replacements; this choice resets
+after filling or when the form structure changes. Empty dropdown placeholders
+are counted as unanswered. Selections must match a unique available choice;
+ambiguous and unavailable answers stay in the review checklist.
+
+## Synthetic application lab
+
+Run `uv run python scripts/autofill_lab.py` from the repository root and open
+`http://127.0.0.1:8765/lab`. The lab loads the actual panel scripts and real API
+with a fictional profile and a local Chrome-message bridge. It includes 39 cases
+across 13 provider identities; it does not exercise manifest installation or
+employer servers. Run `node scripts/autofill_lab_qa.mjs` in another terminal.
+See the [autofill strategy and evaluation plan](../docs/AUTOFILL_STRATEGY_AND_EVALUATION.md)
+for setup, data design, coverage limits and additional tests.
+
 ## Local Installation
 
 1. Start the API with `uv run applytex-api` and the web UI with `cd frontend && npm run dev`.
