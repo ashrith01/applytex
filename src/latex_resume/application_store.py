@@ -10,6 +10,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
+from latex_resume.data_protection import (
+    DataProtection,
+    protect_profile_payload,
+    protect_submission_fields,
+    protection_from_env,
+    unprotect_profile_payload,
+    unprotect_submission_fields,
+)
 from latex_resume.job_models import (
     ALLOWED_APPLICATION_TRANSITIONS,
     APPLY_RUN_TRANSITIONS,
@@ -147,11 +155,17 @@ def _merge_notes(primary: str, secondary: str) -> str:
 class ApplicationStore:
     """Small local-first SQLite repository for the job application MVP."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, protection: DataProtection | None = None) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        # Field-level encryption for EEO / compensation / LLM keys (no-op without a key).
+        self._protection = protection or protection_from_env()
         self._initialize()
+
+    @property
+    def protection(self) -> DataProtection:
+        return self._protection
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
@@ -281,6 +295,37 @@ class ApplicationStore:
                     started_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS llm_usage (
+                    profile_id TEXT NOT NULL,
+                    day TEXT NOT NULL,
+                    calls INTEGER NOT NULL DEFAULT 0,
+                    tokens INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (profile_id, day)
+                );
+
+                CREATE TABLE IF NOT EXISTS latex_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    last_accessed REAL NOT NULL,
+                    created_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    revoked_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    applied_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS apply_runs (
                     run_id TEXT PRIMARY KEY,
                     application_id TEXT NOT NULL,
@@ -304,6 +349,33 @@ class ApplicationStore:
                     WHERE json_extract(payload_json, '$.watchlist_entry_id') IS NOT NULL;
                 """
             )
+            self._apply_migrations(connection)
+
+    # Ordered, idempotent schema changes that the CREATE TABLE IF NOT EXISTS
+    # baseline cannot express (ALTER TABLE, backfills). Each runs once per DB.
+    _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
+        (1, "baseline", ""),
+    )
+
+    def _apply_migrations(self, connection: sqlite3.Connection) -> None:
+        applied = {
+            int(row["version"])
+            for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        for version, name, sql in self._MIGRATIONS:
+            if version in applied:
+                continue
+            if sql:
+                connection.executescript(sql)
+            connection.execute(
+                "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                (version, name, utc_now()),
+            )
+
+    def schema_version(self) -> int:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
+        return int(row["version"] or 0) if row else 0
 
     def save_search(self, result: JobSearchResult) -> None:
         """Atomically persist a search and all returned jobs."""
@@ -645,9 +717,14 @@ class ApplicationStore:
                 (profile_id,),
             ).fetchone()
         if row:
-            return CandidateProfile.model_validate_json(row["payload_json"])
+            return self._load_profile(row["payload_json"])
         profile = CandidateProfile(profile_id=profile_id)
         return self.save_candidate_profile(profile)
+
+    def _load_profile(self, payload_json: str) -> CandidateProfile:
+        return CandidateProfile.model_validate(
+            unprotect_profile_payload(json.loads(payload_json), self._protection)
+        )
 
     def list_candidate_profiles(self) -> list[CandidateProfile]:
         """Return all persisted candidate profiles, newest first."""
@@ -659,10 +736,7 @@ class ApplicationStore:
                 ORDER BY updated_at DESC
                 """
             ).fetchall()
-        return [
-            CandidateProfile.model_validate_json(row["payload_json"])
-            for row in rows
-        ]
+        return [self._load_profile(row["payload_json"]) for row in rows]
 
     def candidate_profile_exists(self, profile_id: str) -> bool:
         """Return whether a profile row already exists (without creating one)."""
@@ -679,6 +753,7 @@ class ApplicationStore:
     def save_candidate_profile(self, profile: CandidateProfile) -> CandidateProfile:
         """Persist user-owned profile facts and reusable exact answers."""
         updated = profile.model_copy(update={"updated_at": utc_now()})
+        payload = protect_profile_payload(updated.model_dump(mode="json"), self._protection)
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -688,11 +763,90 @@ class ApplicationStore:
                 """,
                 (
                     updated.profile_id,
-                    updated.model_dump_json(),
+                    json.dumps(payload, ensure_ascii=True),
                     updated.updated_at,
                 ),
             )
         return updated
+
+    # ------------------------------------------------------------------
+    # LLM usage (per profile, per UTC day) for budgets
+    # ------------------------------------------------------------------
+
+    def record_llm_usage(self, profile_id: str, calls: int, tokens: int) -> dict[str, int]:
+        day = utc_now()[:10]
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO llm_usage (profile_id, day, calls, tokens, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id, day) DO UPDATE SET
+                    calls = calls + excluded.calls,
+                    tokens = tokens + excluded.tokens,
+                    updated_at = excluded.updated_at
+                """,
+                (profile_id, day, max(0, calls), max(0, tokens), utc_now()),
+            )
+        return self.get_llm_usage_today(profile_id)
+
+    def get_llm_usage_today(self, profile_id: str) -> dict[str, int]:
+        day = utc_now()[:10]
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT calls, tokens FROM llm_usage WHERE profile_id = ? AND day = ?",
+                (profile_id, day),
+            ).fetchone()
+        return {"calls": int(row["calls"]) if row else 0, "tokens": int(row["tokens"]) if row else 0, "day": day}  # type: ignore[dict-item]
+
+    # ------------------------------------------------------------------
+    # Classic /latex sessions (durable; mirrors tailor_sessions)
+    # ------------------------------------------------------------------
+
+    def save_latex_session_payload(
+        self,
+        *,
+        session_id: str,
+        profile_id: str,
+        payload: dict[str, Any],
+        created_at: float,
+        last_accessed: float,
+    ) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO latex_sessions
+                    (session_id, profile_id, payload_json, last_accessed, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (session_id, profile_id, json.dumps(payload, ensure_ascii=True, default=str), last_accessed, created_at),
+            )
+
+    def get_latex_session_row(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT session_id, profile_id, payload_json, last_accessed, created_at FROM latex_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "session_id": row["session_id"],
+            "profile_id": row["profile_id"],
+            "payload": json.loads(row["payload_json"]),
+            "last_accessed": float(row["last_accessed"]),
+            "created_at": float(row["created_at"]),
+        }
+
+    def delete_latex_session(self, session_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM latex_sessions WHERE session_id = ?", (session_id,))
+            return cursor.rowcount > 0
+
+    def cleanup_expired_latex_sessions(self, ttl_seconds: float) -> int:
+        cutoff = time.time() - ttl_seconds
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM latex_sessions WHERE last_accessed < ?", (cutoff,))
+            return cursor.rowcount
 
     # ------------------------------------------------------------------
     # Watchlist and feed
@@ -1192,6 +1346,147 @@ class ApplicationStore:
         return [FormScan.model_validate_json(row["payload_json"]) for row in rows]
 
     # ------------------------------------------------------------------
+    # Auth sessions (bearer tokens survive API restarts)
+    # ------------------------------------------------------------------
+
+    def save_auth_session(self, *, token_hash: str, profile_id: str, created_at: str, expires_at: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO auth_sessions (token_hash, profile_id, created_at, expires_at, revoked_at)
+                VALUES (?, ?, ?, ?, NULL)
+                """,
+                (token_hash, profile_id, created_at, expires_at),
+            )
+
+    def get_auth_session(self, token_hash: str) -> dict[str, str] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT profile_id, created_at, expires_at, revoked_at FROM auth_sessions WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+        if row is None or row["revoked_at"]:
+            return None
+        return {"profile_id": row["profile_id"], "created_at": row["created_at"], "expires_at": row["expires_at"]}
+
+    def revoke_auth_session(self, token_hash: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+                (utc_now(), token_hash),
+            )
+        return cursor.rowcount > 0
+
+    def revoke_profile_auth_sessions(self, profile_id: str) -> int:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE auth_sessions SET revoked_at = ? WHERE profile_id = ? AND revoked_at IS NULL",
+                (utc_now(), profile_id),
+            )
+        return cursor.rowcount
+
+    def purge_expired_auth_sessions(self) -> int:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM auth_sessions WHERE expires_at < ? OR revoked_at IS NOT NULL",
+                (utc_now(),),
+            )
+        return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # Data lifecycle: export and delete everything one profile owns
+    # ------------------------------------------------------------------
+
+    def export_profile_data(self, profile_id: str) -> dict[str, Any]:
+        """Portable JSON of everything stored for one profile (no PDF bytes, no secrets)."""
+        profile = self.get_candidate_profile(profile_id).model_dump(
+            mode="json", exclude={"resume_pdf_b64": True, "llm_settings": {"api_key"}}
+        )
+        applications = self.list_applications(limit=10_000, profile_id=profile_id)
+        application_ids = [application.application_id for application in applications]
+        detail: list[dict[str, Any]] = []
+        for application in applications:
+            bundle = self.get_submission_bundle(application.application_id)
+            detail.append(
+                {
+                    "application": application.model_dump(mode="json"),
+                    "artifacts": [
+                        artifact.model_dump(mode="json", exclude={"pdf_b64", "latex_source"})
+                        for artifact in self.list_application_artifacts(application.application_id, limit=200)
+                    ],
+                    "events": [event.model_dump(mode="json") for event in self.list_application_events(application.application_id, limit=1000)],
+                    "tasks": [task.model_dump(mode="json") for task in self.list_application_tasks(application.application_id, limit=1000)],
+                    "form_scans": [scan.model_dump(mode="json") for scan in self.list_form_scans(application.application_id)],
+                    "submission": bundle.model_dump(mode="json") if bundle else None,
+                }
+            )
+        return {
+            "format": "applytex-profile-export",
+            "version": 1,
+            "exported_at": utc_now(),
+            "profile": profile,
+            "answers": [answer.model_dump(mode="json") for answer in self.list_profile_answers(profile_id)],
+            "projects": [project.model_dump(mode="json") for project in self.list_profile_projects(profile_id)],
+            "watchlist": [entry.model_dump(mode="json") for entry in self.list_watchlist_entries(profile_id)],
+            "ingestion_runs": [run.model_dump(mode="json") for run in self.list_ingestion_runs(profile_id, limit=200)],
+            "jobs": [job.model_dump(mode="json") for job in self.list_jobs(limit=10_000, profile_id=profile_id)],
+            "applications": detail,
+            "apply_runs": [run.model_dump(mode="json") for run in self.list_apply_runs(profile_id, limit=1000)],
+            "application_ids": application_ids,
+        }
+
+    def delete_profile_data(self, profile_id: str) -> dict[str, int]:
+        """Remove every row and on-disk file that belongs to one profile."""
+        applications = self.list_applications(limit=10_000, profile_id=profile_id)
+        application_ids = [application.application_id for application in applications]
+        artifact_paths = [
+            artifact.pdf_path
+            for application_id in application_ids
+            for artifact in self.list_application_artifacts(application_id, limit=500)
+            if artifact.pdf_path
+        ]
+        profile = self.get_candidate_profile(profile_id)
+        if profile.resume_pdf_path:
+            artifact_paths.append(profile.resume_pdf_path)
+        run_ids = [run.run_id for run in self.list_apply_runs(profile_id, limit=10_000)]
+        counts: dict[str, int] = {}
+        with self._lock, self._connect() as connection:
+            def run(label: str, sql: str, params: tuple[object, ...]) -> None:
+                counts[label] = counts.get(label, 0) + connection.execute(sql, params).rowcount
+
+            for application_id in application_ids:
+                for table in ("application_artifacts", "application_events", "application_tasks", "form_scans", "submission_bundles", "apply_runs"):
+                    run(table, f"DELETE FROM {table} WHERE application_id = ?", (application_id,))
+                run("applications", "DELETE FROM applications WHERE application_id = ?", (application_id,))
+            run("apply_runs", "DELETE FROM apply_runs WHERE profile_id = ?", (profile_id,))
+            run("tailor_sessions", "DELETE FROM tailor_sessions WHERE profile_id = ?", (profile_id,))
+            run("latex_sessions", "DELETE FROM latex_sessions WHERE profile_id = ?", (profile_id,))
+            run("llm_usage", "DELETE FROM llm_usage WHERE profile_id = ?", (profile_id,))
+            run("jobs", "DELETE FROM jobs WHERE json_extract(payload_json, '$.captured_for_profile_id') = ?", (profile_id,))
+            for table in ("profile_answers", "candidate_projects", "watchlist_entries", "ingestion_runs", "auth_sessions"):
+                run(table, f"DELETE FROM {table} WHERE profile_id = ?", (profile_id,))
+            run("app_settings", "DELETE FROM app_settings WHERE key = ?", (f"auth.password.{profile_id}",))
+            run("candidate_profiles", "DELETE FROM candidate_profiles WHERE profile_id = ?", (profile_id,))
+            active = connection.execute("SELECT value FROM app_settings WHERE key = 'active_profile_id'").fetchone()
+            if active and active["value"] == profile_id:
+                connection.execute("DELETE FROM app_settings WHERE key = 'active_profile_id'")
+        removed_files = 0
+        for relative in artifact_paths:
+            candidate = (self.path.parent / relative).resolve()
+            if self.path.parent.resolve() in candidate.parents and candidate.is_file():
+                candidate.unlink()
+                removed_files += 1
+        for run_id in run_ids:
+            directory = self.path.parent / "runs" / run_id
+            if directory.is_dir():
+                for file in directory.iterdir():
+                    file.unlink()
+                    removed_files += 1
+                directory.rmdir()
+        counts["files"] = removed_files
+        return counts
+
+    # ------------------------------------------------------------------
     # Executor runs
     # ------------------------------------------------------------------
 
@@ -1295,6 +1590,8 @@ class ApplicationStore:
     # ------------------------------------------------------------------
 
     def save_submission_bundle(self, bundle: SubmissionBundle) -> SubmissionBundle:
+        payload = bundle.model_dump(mode="json")
+        payload["fields"] = protect_submission_fields(payload["fields"], self._protection)
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -1302,7 +1599,7 @@ class ApplicationStore:
                     (bundle_id, application_id, profile_id, payload_json, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (bundle.bundle_id, bundle.application_id, bundle.profile_id, bundle.model_dump_json(), bundle.created_at),
+                (bundle.bundle_id, bundle.application_id, bundle.profile_id, json.dumps(payload, ensure_ascii=True), bundle.created_at),
             )
         return bundle
 
@@ -1316,7 +1613,11 @@ class ApplicationStore:
                 """,
                 (application_id,),
             ).fetchone()
-        return SubmissionBundle.model_validate_json(row["payload_json"]) if row else None
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        payload["fields"] = unprotect_submission_fields(payload.get("fields", []), self._protection)
+        return SubmissionBundle.model_validate(payload)
 
     def list_due_tasks(
         self,

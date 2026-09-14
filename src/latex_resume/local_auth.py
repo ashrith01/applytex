@@ -6,6 +6,9 @@ When enabled:
 - ``POST /auth/login`` exchanges a profile id + local password for a bearer token
 - API requests must send ``Authorization: Bearer <token>``
 - ``X-Profile-Id`` alone is no longer trusted for privileged reads
+- tokens are stored hashed in SQLite, so they survive API restarts, expire
+  after ``APPLYTEX_TOKEN_TTL_HOURS`` (default 14 days), and can be revoked
+  with ``POST /auth/logout``
 
 When disabled, the existing username-only local profile flow continues to work.
 """
@@ -16,12 +19,15 @@ import hashlib
 import hmac
 import os
 import secrets
-import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
+
+TOKEN_TTL_ENV = "APPLYTEX_TOKEN_TTL_HOURS"
+DEFAULT_TOKEN_TTL_HOURS = 24 * 14
 
 
 def auth_required() -> bool:
@@ -32,6 +38,14 @@ def auth_required() -> bool:
         "yes",
         "on",
     }
+
+
+def token_ttl_hours() -> int:
+    raw = os.environ.get(TOKEN_TTL_ENV, str(DEFAULT_TOKEN_TTL_HOURS)).strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_TOKEN_TTL_HOURS
 
 
 def _hash_secret(value: str, *, salt: str) -> str:
@@ -47,21 +61,30 @@ def _hash_secret(value: str, *, salt: str) -> str:
     return dk.hex()
 
 
+def _token_hash(token: str) -> str:
+    """Tokens are stored only as SHA-256 digests; the raw value never touches disk."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @dataclass
 class AuthSession:
     token: str
     profile_id: str
-    created_at: float
-    expires_at: float
+    created_at: str
+    expires_at: str
 
 
 class LocalAuthStore:
-    """In-process local password + bearer token store (SQLite-backed secrets)."""
+    """Local password + bearer token store, persisted in the application SQLite DB."""
 
     def __init__(self, application_store: object) -> None:
         self._store = application_store
-        self._sessions: dict[str, AuthSession] = {}
-        self._ttl_seconds = 60 * 60 * 12
+
+    # --- passwords --------------------------------------------------------
 
     def set_password(self, profile_id: str, password: str) -> None:
         if len(password) < 8:
@@ -89,31 +112,47 @@ class LocalAuthStore:
         raw = self._store.get_setting(f"auth.password.{profile_id}")
         return bool(raw and ":" in raw)
 
+    # --- tokens -----------------------------------------------------------
+
     def issue_token(self, profile_id: str) -> AuthSession:
         token = secrets.token_urlsafe(32)
-        now = time.time()
+        created = _now()
+        expires = created + timedelta(hours=token_ttl_hours())
         session = AuthSession(
             token=token,
             profile_id=profile_id,
-            created_at=now,
-            expires_at=now + self._ttl_seconds,
+            created_at=created.isoformat(),
+            expires_at=expires.isoformat(),
         )
-        self._sessions[token] = session
+        self._store.save_auth_session(
+            token_hash=_token_hash(token),
+            profile_id=profile_id,
+            created_at=session.created_at,
+            expires_at=session.expires_at,
+        )
         return session
 
     def resolve_token(self, token: str | None) -> AuthSession | None:
         if not token:
             return None
-        session = self._sessions.get(token)
-        if session is None:
+        row = self._store.get_auth_session(_token_hash(token))
+        if row is None:
             return None
-        if session.expires_at < time.time():
-            self._sessions.pop(token, None)
+        if datetime.fromisoformat(row["expires_at"]) < _now():
+            self._store.revoke_auth_session(_token_hash(token))
             return None
-        return session
+        return AuthSession(
+            token=token,
+            profile_id=row["profile_id"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+        )
 
-    def revoke_token(self, token: str) -> None:
-        self._sessions.pop(token, None)
+    def revoke_token(self, token: str) -> bool:
+        return bool(self._store.revoke_auth_session(_token_hash(token)))
+
+    def revoke_profile_tokens(self, profile_id: str) -> int:
+        return int(self._store.revoke_profile_auth_sessions(profile_id))
 
 
 PUBLIC_PATHS = {
@@ -138,6 +177,7 @@ def install_auth_middleware(app: object, auth_store: LocalAuthStore) -> None:
         session = auth_store.resolve_token(token) if token else None
         if session is not None:
             request.state.auth_profile_id = session.profile_id
+            request.state.auth_token = token
 
         if not auth_required():
             return await call_next(request)
@@ -163,3 +203,21 @@ def authenticated_profile_id(
     if auth_required():
         return bound
     return x_profile_id
+
+
+def rate_limit_key(request: Request) -> str:
+    """Rate-limit per authenticated profile, else per declared profile, else per IP."""
+    bound = getattr(request.state, "auth_profile_id", None)
+    if bound:
+        return f"profile:{bound}"
+    declared = (request.headers.get("x-profile-id") or "").strip()
+    if declared and not auth_required():
+        return f"profile:{declared}"
+    client = request.client.host if request.client else "unknown"
+    return f"ip:{client}"
+
+
+def require_profile_match(scoped_profile_id: str, requested: str | None) -> None:
+    """Reject a body/query profile that differs from the request's resolved profile."""
+    if requested and requested.strip() and requested.strip() != scoped_profile_id:
+        raise HTTPException(403, "profile_id does not match the acting profile.")

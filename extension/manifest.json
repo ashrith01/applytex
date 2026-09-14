@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ApplyTeX ATS",
-  "version": "0.1.0",
-  "description": "Capture jobs and inspect application forms with a local ApplyTeX ATS backend.",
+  "version": "0.2.0",
+  "description": "Capture jobs, review-fill applications, and track receipts with a local or self-hosted ApplyTeX ATS API.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -36,5 +36,12 @@
   },
   "action": {
     "default_title": "Open ApplyTeX ATS"
-  }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "optional_host_permissions": [
+    "https://*/*"
+  ]
 }

@@ -756,6 +756,21 @@ class EqualOpportunityProfile(BaseModel):
         return []
 
 
+class LLMSettings(BaseModel):
+    """Per-profile model routing, key, and daily budget.
+
+    ``api_key`` is encrypted at rest when ``APPLYTEX_DATA_KEY`` is set and is
+    never returned by the API (only a masked tail). A ``backend`` here
+    overrides the server-wide ``LLM_BACKEND`` for this profile's requests.
+    """
+
+    backend: Literal["groq", "anthropic", "openai", "ollama", "codex"] | None = None
+    api_key: str | None = Field(default=None, max_length=400)
+    model: str | None = Field(default=None, max_length=120)
+    daily_call_budget: int | None = Field(default=None, ge=0)
+    daily_token_budget: int | None = Field(default=None, ge=0)
+
+
 class CandidateProfile(BaseModel):
     """User-controlled facts available to future form-filling code."""
 
@@ -793,6 +808,7 @@ class CandidateProfile(BaseModel):
         default_factory=ApplicationFactsProfile
     )
     custom_answers: dict[str, str] = Field(default_factory=dict)
+    llm_settings: LLMSettings = Field(default_factory=LLMSettings)
     updated_at: str = Field(default_factory=utc_now)
 
 

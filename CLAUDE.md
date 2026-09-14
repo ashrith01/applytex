@@ -73,17 +73,19 @@ persistence, authentication, and production approval workflows are not built yet
 | `src/latex_resume/optimizer.py` | LLM optimization orchestration, reviewer loop, overflow repair, ATS before/after scoring. |
 | `src/latex_resume/change_validation.py` | Truthfulness / claim-drift gates applied to every proposed statement edit. |
 | `src/latex_resume/ats.py`, `screening.py` | Deterministic keyword/skill fit scoring and five-category recruiter-style analysis. |
-| `src/latex_resume/llm.py`, `llm_routing.py` | JSON LLM backends (Groq, Anthropic, Ollama, Codex SDK; OpenAI for answer drafting only; Gemini placeholder) and per-stage routing. |
+| `src/latex_resume/llm.py`, `llm_routing.py` | JSON LLM backends (Groq, Anthropic, Ollama, Codex SDK; OpenAI for answer drafting only; Gemini placeholder) and per-stage routing. `ProfileLLMContext` (set by an API middleware from `CandidateProfile.llm_settings`) overrides backend/key/model per request and enforces daily budgets (`LLMBudgetExceeded` → 429). |
 
 ### HTTP layer
 
 | File | Responsibility |
 |------|----------------|
-| `src/latex_resume/api.py` | App factory (`create_app`), lifespan, rate limiter, and the shared request/response Pydantic models + helpers the routers import. Still large; schemas/services extraction is pending. |
+| `src/latex_resume/api.py` | App factory (`create_app`), lifespan, rate limiter, and shared orchestration helpers the routers import. Services extraction is still pending. |
+| `src/latex_resume/schemas.py` | All HTTP request/response Pydantic models (re-exported by `api.py` for compatibility). Add new wire models here, not in `api.py`. |
 | `src/latex_resume/routers/` | Route modules: `latex` (classic upload/optimize), `tailor` (guided sessions), `profiles`, `jobs`, `applications`, `extension`, `auth`. `_deps.py` holds profile-ownership dependencies (`require_*_for_profile` → 404, never 403). |
-| `src/latex_resume/session.py` | **In-memory** store for classic `/latex/*` sessions (lost on restart). |
+| `src/latex_resume/session.py` | Classic `/latex/*` sessions: in-memory registry with SQLite write-through (`latex_sessions`) once `store.bind()` runs in `create_app`; rehydrates by re-parsing the original LaTeX. |
+| `src/latex_resume/data_protection.py` | Fernet field-level encryption (`APPLYTEX_DATA_KEY`) for EEO, compensation, per-profile LLM keys and EEO receipt values. No-op without a key; reading sealed rows without the key raises `DataKeyMissing`. |
 | `src/latex_resume/tailor_store.py` | SQLite-backed tailor sessions. |
-| `src/latex_resume/local_auth.py` | Optional bearer-token auth (`APPLYTEX_REQUIRE_AUTH=1`), scrypt passwords, in-process token dict. |
+| `src/latex_resume/local_auth.py` | Optional bearer-token auth (`APPLYTEX_REQUIRE_AUTH=1`), scrypt passwords, SHA-256-hashed tokens persisted in `auth_sessions` with TTL/revocation, profile-aware rate-limit key. Every route resolves its acting profile through `routers/_deps.resolve_request_profile_id`; see `docs/AUTH.md`. |
 | `src/latex_resume/logging_config.py` | structlog setup (console or JSON). |
 
 ### Job application platform
