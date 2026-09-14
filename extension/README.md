@@ -29,6 +29,28 @@ without trying to recapture the job description from the login page.
 It cannot submit applications. The user reviews the completed page and clicks
 the employer's Submit button manually.
 
+## Receipts, status, and cover letters
+
+- After a fill, the panel reports the outcome and the tracker advances to
+  **ready for review** (no unresolved required fields) or **needs input** —
+  never backwards.
+- When a page looks like an employer confirmation ("Thank you for applying",
+  "Application submitted", a `/confirmation` URL) *and* the form is gone, the
+  panel shows **Looks like this application was submitted — Confirm / Not yet**.
+  Nothing is recorded until you confirm. **Mark as submitted** in the job
+  header does the same for pages the detector misses.
+- Confirming writes an immutable **receipt** (`GET /applications/{id}/submission`):
+  every scanned field's final value per step, which resume and cover letter
+  were attached (by artifact id and SHA-256), the job snapshot hash, and how it
+  was confirmed. Later profile or answer edits never change it. A follow-up
+  task is scheduled 7 days out; `GET /applications/tasks/due` lists what is due.
+- The Tailor tab gains a **Cover letter** section: draft (230–320 words,
+  grounded only in your resume and the JD — any number not already in your
+  resume is rejected), edit, approve (renders a one-page PDF when `pdflatex`
+  is available, otherwise a text file). Cover-letter upload fields then offer
+  **Attach ApplyTeX cover letter**, which injects the file exactly like the
+  resume path does.
+
 The **Autofill information** workspace edits the active local profile without
 leaving the application page. Each category is saved explicitly through a
 partial profile patch; unsaved edits never change reusable answers. Voluntary
