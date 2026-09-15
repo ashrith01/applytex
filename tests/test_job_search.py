@@ -960,3 +960,18 @@ def test_intern_titles_must_name_ai_ml_or_data_work() -> None:
     assert classify_target_role("Perception Research Intern", "Work on machine learning for perception.") == TargetRole.ML_INTERN
     assert classify_target_role("Machine Learning Intern", "") == TargetRole.ML_INTERN
     assert classify_target_role("Data Science Intern", "") == TargetRole.DATA_SCIENCE_INTERN
+
+
+def test_greenhouse_escaped_html_content_becomes_plain_text() -> None:
+    escaped = "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;&lt;strong&gt;Who we are&lt;/strong&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Python &amp;amp; SQL&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"jobs": [{"id": 1, "title": "AI Engineer", "content": escaped, "location": {"name": "Remote - US"}, "absolute_url": "https://example.test/1", "updated_at": None}]})
+
+    async def run() -> list[JobPosting]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await PublicJobBoardClient(client).fetch(JobSourceConfig(provider=JobProvider.GREENHOUSE, board_token="samsara", company="Samsara"))
+
+    job = asyncio.run(run())[0]
+    assert job.description == "Who we are\nPython & SQL"
+    assert "<" not in job.description and "&lt;" not in job.description

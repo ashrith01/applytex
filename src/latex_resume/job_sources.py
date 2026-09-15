@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import re
 import uuid
 from html.parser import HTMLParser
@@ -139,7 +140,9 @@ class PublicJobBoardClient:
                 source=source,
                 external_id=str(item.get("id", "")),
                 title=str(item.get("title", "")).strip(),
-                description=html_to_text(str(item.get("content", ""))),
+                # Greenhouse returns content HTML-escaped (&lt;p&gt;); unescape before parsing
+                # or the tags survive as literal text in the description.
+                description=html_to_text(html.unescape(str(item.get("content", "")))),
                 location=str((item.get("location") or {}).get("name", "")).strip(),
                 source_url=str(item.get("absolute_url", "")).strip(),
                 apply_url=str(item.get("absolute_url", "")).strip(),
