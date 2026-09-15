@@ -78,6 +78,41 @@ _TEXAS_LOCATION_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# An internship only counts as an AI/ML/data internship when its *title* says
+# so. Descriptions of robotics or AV companies mention machine learning even for
+# electrical, mechanical, controls, or audit internships.
+_INTERN_TITLE_AI_TERMS = re.compile(
+    r"\b(?:ai|a\.i\.|ml|machine learning|artificial intelligence|deep learning|data|"
+    r"nlp|natural language|llm|genai|generative|agentic|computer vision|perception|"
+    r"research|applied scien\w*|reinforcement learning|robot learning|autonomy)\b"
+)
+
+
+_US_MARKERS = re.compile(r"\b(?:us|u\.s\.?|usa|u\.s\.a\.?|united states|america|nationwide)\b")
+
+# Remote postings that name only a non-US place are not "Remote - US". A
+# location listing a US option anywhere ("Remote - Canada; Remote - US") passes.
+_NON_US_MARKERS = re.compile(
+    r"\b(?:canada|toronto|vancouver|montreal|ontario|mexico|brazil|argentina|colombia|chile|peru|"
+    r"latam|latin america|united kingdom|uk|england|scotland|london|ireland|dublin|europe|emea|eu|"
+    r"germany|berlin|munich|france|paris|spain|madrid|barcelona|portugal|lisbon|italy|netherlands|"
+    r"amsterdam|belgium|switzerland|zurich|austria|poland|warsaw|czech|prague|romania|sweden|"
+    r"stockholm|norway|denmark|copenhagen|finland|estonia|ukraine|serbia|greece|turkey|israel|"
+    r"tel aviv|uae|dubai|saudi|egypt|nigeria|kenya|south africa|india|bangalore|bengaluru|"
+    r"hyderabad|pune|mumbai|delhi|pakistan|apac|asia|singapore|japan|tokyo|korea|seoul|china|"
+    r"beijing|shanghai|hong kong|taiwan|taipei|philippines|vietnam|indonesia|malaysia|thailand|"
+    r"australia|sydney|melbourne|new zealand)\b"
+)
+
+
+def remote_location_is_us(location: str) -> bool:
+    """True for bare "Remote", any US option, or US-only places; False for non-US-only."""
+    text = location.casefold()
+    if _US_MARKERS.search(text):
+        return True
+    return not _NON_US_MARKERS.search(text)
+
+
 def classify_target_role(title: str, description: str = "") -> TargetRole | None:
     """Classify a posting into one selected role family."""
     title_text = _normalize(title)
@@ -88,7 +123,7 @@ def classify_target_role(title: str, description: str = "") -> TargetRole | None
         if any(alias in title_text for alias in ROLE_ALIASES[role]):
             return role
 
-    if internship:
+    if internship and _INTERN_TITLE_AI_TERMS.search(title_text):
         if any(term in combined for term in ("agentic", "ai agent", "llm agent", "generative ai")):
             return TargetRole.AGENTIC_AI_INTERN
         if any(term in combined for term in ("natural language", "nlp", "language model")):
@@ -124,15 +159,7 @@ def location_matches(job: JobPosting, preferences: SearchPreferences) -> bool:
     location = _normalize(job.location)
     description = _normalize(job.description[:1000])
     if job.workplace_type == "remote" and preferences.allow_remote_us:
-        foreign_markers = (
-            "canada",
-            "united kingdom",
-            "europe",
-            "emea",
-            "india",
-            "australia",
-        )
-        return not any(marker in location for marker in foreign_markers)
+        return remote_location_is_us(job.location)
     if job.workplace_type == "hybrid" and not preferences.allow_hybrid:
         return False
     if job.workplace_type == "onsite" and not preferences.allow_onsite:

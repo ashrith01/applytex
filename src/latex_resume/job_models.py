@@ -231,6 +231,7 @@ class IngestionRun(BaseModel):
     matched_jobs: int = 0
     new_jobs: int = 0
     updated_jobs: int = 0
+    removed_jobs: int = 0
     errors: list[SourceSearchError] = Field(default_factory=list)
 
 

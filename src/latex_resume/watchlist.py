@@ -194,14 +194,20 @@ class WatchlistIngestor:
 
         run.matched_jobs = len(matched)
         run.new_jobs, run.updated_jobs = self._store.upsert_feed_jobs(matched)
+        # Only prune boards that fetched successfully: an outage must not empty the feed.
+        kept = {job.job_id for job in matched}
+        for entry, (_, error) in zip(entries, outcomes, strict=True):
+            if error is None:
+                run.removed_jobs += self._store.prune_feed_jobs(profile_id, entry.entry_id, kept)
         run.finished_at = utc_now()
         logger.info(
-            "watchlist refresh profile=%s sources=%d fetched=%d matched=%d new=%d errors=%d",
+            "watchlist refresh profile=%s sources=%d fetched=%d matched=%d new=%d removed=%d errors=%d",
             profile_id,
             run.source_count,
             run.fetched_jobs,
             run.matched_jobs,
             run.new_jobs,
+            run.removed_jobs,
             len(run.errors),
         )
         return self._store.save_ingestion_run(run)
