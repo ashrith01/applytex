@@ -1013,6 +1013,30 @@ class ApplicationStore:
                 )
         return new_count, updated_count
 
+    def prune_feed_jobs(self, profile_id: str, entry_id: str, keep_job_ids: set[str]) -> int:
+        """Drop feed jobs from one board that no longer match (or were taken down).
+
+        Jobs that already have an application for this profile are kept, so
+        tracker history never loses its posting.
+        """
+        applied = {
+            application.job_id
+            for application in self.list_applications(limit=10_000, profile_id=profile_id)
+        }
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT job_id FROM jobs
+                WHERE json_extract(payload_json, '$.watchlist_entry_id') = ?
+                  AND json_extract(payload_json, '$.captured_for_profile_id') = ?
+                """,
+                (entry_id, profile_id),
+            ).fetchall()
+            stale = [row["job_id"] for row in rows if row["job_id"] not in keep_job_ids and row["job_id"] not in applied]
+            for job_id in stale:
+                connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+        return len(stale)
+
     def list_feed_jobs(
         self,
         profile_id: str,

@@ -101,7 +101,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     run = asyncio.run(WatchlistIngestor(store).refresh(profile_id, trigger="cli"))
     print(
         f"Refreshed {run.source_count} boards: fetched {run.fetched_jobs}, matched {run.matched_jobs}, "
-        f"new {run.new_jobs}, updated {run.updated_jobs}, errors {len(run.errors)}."
+        f"new {run.new_jobs}, updated {run.updated_jobs}, removed {run.removed_jobs}, errors {len(run.errors)}."
     )
     for error in run.errors:
         print(f"  ! {error.provider.value}/{error.board_token}: {error.message}")

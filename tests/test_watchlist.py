@@ -283,3 +283,42 @@ def test_cli_seed_list_refresh_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "boards for profile 'default'" in capsys.readouterr().out
     assert len(store.list_watchlist_entries("default")) > 10
     assert watchlist_cli.main(["--db", str(db), "seed", "--domain", "no-such-domain"]) == 1
+
+
+def test_refresh_prunes_jobs_that_stop_matching_but_keeps_applied_ones(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("APPLYTEX_WATCHLIST_STRICT", raising=False)
+    store = ApplicationStore(tmp_path / "prune.db")
+    _profile_with_preferences(store)
+    store.upsert_watchlist_entry(_entry("default", "acme", "Acme"))
+    store.upsert_watchlist_entry(_entry("default", "broken", "Broken"))
+    client = FakeBoardClient()
+    ingestor = WatchlistIngestor(store, board_client=client)
+    asyncio.run(ingestor.refresh("default"))
+    feed = {job.title: job for job in store.list_feed_jobs("default")}
+    assert set(feed) == {"Machine Learning Engineer", "Data Scientist"}
+    store.create_application(feed["Data Scientist"].job_id, profile_id="default")
+
+    async def only_ml(source: JobSourceConfig) -> list[JobPosting]:
+        if source.board_token == "broken":
+            raise RuntimeError("HTTP 503")
+        return [_posting(source, "1", "Machine Learning Engineer")]
+
+    monkeypatch.setattr(client, "fetch", only_ml)
+    run = asyncio.run(ingestor.refresh("default"))
+    assert run.removed_jobs == 0, "the applied Data Scientist posting is kept even though it disappeared"
+    assert {job.title for job in store.list_feed_jobs("default")} == {"Machine Learning Engineer", "Data Scientist"}
+
+    # Once there is no application, a job that stops matching leaves the feed.
+    third = store.upsert_watchlist_entry(_entry("default", "robo", "Robo"))
+    asyncio.run(ingestor.refresh("default"))
+    assert any(job.company == "Robo" for job in store.list_feed_jobs("default"))
+
+    async def robo_gone(source: JobSourceConfig) -> list[JobPosting]:
+        if source.board_token == "robo":
+            return []
+        return await only_ml(source)
+
+    monkeypatch.setattr(client, "fetch", robo_gone)
+    run = asyncio.run(ingestor.refresh("default"))
+    assert run.removed_jobs == 1 and not any(job.company == "Robo" for job in store.list_feed_jobs("default"))
+    assert third.entry_id  # entry itself stays followed

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import re
 import uuid
 from html.parser import HTMLParser
@@ -66,18 +67,25 @@ def _stable_job_id(provider: JobProvider, board_token: str, external_id: str) ->
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
 
 
+# "Distributed" alone is a technology word ("Distributed Data Systems"), not a
+# work arrangement; only phrases about the team or company count.
+_REMOTE_PATTERN = re.compile(
+    r"\bremote\b|work from home|\bwfh\b|fully distributed|distributed (?:team|company|workforce)"
+)
+
+
 def _workplace_type(title: str, location: str, description: str) -> str:
     structured = f"{title} {location}".lower()
     if "hybrid" in structured:
         return "hybrid"
-    if re.search(r"\bremote\b|work from home|distributed", structured):
+    if _REMOTE_PATTERN.search(structured):
         return "remote"
     if location.strip():
         return "onsite"
     description_text = description[:1000].lower()
     if "hybrid" in description_text:
         return "hybrid"
-    if re.search(r"\bremote\b|work from home|distributed", description_text):
+    if _REMOTE_PATTERN.search(description_text):
         return "remote"
     return "unknown"
 
@@ -132,7 +140,9 @@ class PublicJobBoardClient:
                 source=source,
                 external_id=str(item.get("id", "")),
                 title=str(item.get("title", "")).strip(),
-                description=html_to_text(str(item.get("content", ""))),
+                # Greenhouse returns content HTML-escaped (&lt;p&gt;); unescape before parsing
+                # or the tags survive as literal text in the description.
+                description=html_to_text(html.unescape(str(item.get("content", "")))),
                 location=str((item.get("location") or {}).get("name", "")).strip(),
                 source_url=str(item.get("absolute_url", "")).strip(),
                 apply_url=str(item.get("absolute_url", "")).strip(),

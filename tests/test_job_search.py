@@ -897,3 +897,81 @@ def test_pronouns_and_sexual_orientation_resolution() -> None:
 
     assert actions[0].value == "They/Them"
     assert actions[1].value == "Heterosexual"
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the first real-profile feed run (2026-09-14)
+# ---------------------------------------------------------------------------
+
+
+def _feed_posting(title: str, location: str, description: str = "") -> JobPosting:
+    from latex_resume.job_matching import enrich_job
+    from latex_resume.job_sources import _workplace_type
+
+    return enrich_job(
+        JobPosting(
+            job_id=f"id-{title}-{location}",
+            provider=JobProvider.GREENHOUSE,
+            board_token="b",
+            external_id="1",
+            company="Co",
+            title=title,
+            description=description or "We build autonomous systems with machine learning and AI.",
+            location=location,
+            workplace_type=_workplace_type(title, location, description),
+            source_url="https://e.test/1",
+            apply_url="https://e.test/1/apply",
+        )
+    )
+
+
+def test_distributed_in_a_title_is_not_a_remote_arrangement() -> None:
+    from latex_resume.job_sources import _workplace_type
+
+    assert _workplace_type("Machine Learning Engineer, Distributed Data Systems", "San Francisco", "") == "onsite"
+    assert _workplace_type("ML Engineer", "Remote - US", "") == "remote"
+    assert _workplace_type("ML Engineer", "", "We are a fully distributed team.") == "remote"
+    assert _workplace_type("ML Engineer", "", "Experience with distributed training.") == "unknown"
+
+
+def test_remote_postings_naming_only_non_us_places_are_rejected() -> None:
+    from latex_resume.job_matching import location_matches, remote_location_is_us
+
+    for location in ("Remote - Spain", "Remote - Ireland", "Remote - Brazil", "Remote, Toronto", "Remote (EU)", "Remote - India"):
+        assert remote_location_is_us(location) is False, location
+    for location in ("Remote - US", "USA (remote)", "Remote U.S.", "Remote", "Remote - Seattle", "San Francisco, CA, US; Remote, US", "Remote - Canada; Remote - US", "Remote - Indiana"):
+        assert remote_location_is_us(location) is True, location
+
+    preferences = SearchPreferences(preferred_locations=["Houston, TX", "Remote - US"])
+    assert not location_matches(_feed_posting("Machine Learning Engineer", "Remote - Spain"), preferences)
+    assert location_matches(_feed_posting("Machine Learning Engineer", "Remote - US"), preferences)
+    assert not location_matches(_feed_posting("Machine Learning Engineer, Distributed Data Systems", "San Francisco"), preferences)
+
+
+def test_intern_titles_must_name_ai_ml_or_data_work() -> None:
+    from latex_resume.job_matching import classify_target_role
+
+    ml_description = "Saronic builds autonomous ships using machine learning and AI."
+    assert classify_target_role("Electrical Engineer Intern (Summer 2027)", ml_description) is None
+    assert classify_target_role("Mechanical Engineer Intern (Summer 2027)", ml_description) is None
+    assert classify_target_role("Internal Audit Intern", "Coinbase uses AI across the company.") is None
+    assert classify_target_role("Winter 2027 Intern, Controls", ml_description) is None
+    assert classify_target_role("Winter 2027 Intern, Artificial Intelligence/Machine Learning", ml_description) == TargetRole.ML_INTERN
+    assert classify_target_role("Perception Research Intern", "Work on machine learning for perception.") == TargetRole.ML_INTERN
+    assert classify_target_role("Machine Learning Intern", "") == TargetRole.ML_INTERN
+    assert classify_target_role("Data Science Intern", "") == TargetRole.DATA_SCIENCE_INTERN
+
+
+def test_greenhouse_escaped_html_content_becomes_plain_text() -> None:
+    escaped = "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;&lt;strong&gt;Who we are&lt;/strong&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Python &amp;amp; SQL&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"jobs": [{"id": 1, "title": "AI Engineer", "content": escaped, "location": {"name": "Remote - US"}, "absolute_url": "https://example.test/1", "updated_at": None}]})
+
+    async def run() -> list[JobPosting]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await PublicJobBoardClient(client).fetch(JobSourceConfig(provider=JobProvider.GREENHOUSE, board_token="samsara", company="Samsara"))
+
+    job = asyncio.run(run())[0]
+    assert job.description == "Who we are\nPython & SQL"
+    assert "<" not in job.description and "&lt;" not in job.description
